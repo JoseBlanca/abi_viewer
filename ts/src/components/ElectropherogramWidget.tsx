@@ -20,30 +20,74 @@ function dyeColor(dyeName: string): string {
 }
 
 interface ElectropherogramWidgetProps {
+  readonly fileName: string;
   readonly label: string;
   readonly channelData: Int16Array;
   readonly channelDyeName: string;
   readonly standardData: Int16Array | null;
   readonly standardDyeName: string;
+  /** Externally controlled X center (e.g., from auto-align). */
+  readonly xCenter?: number | undefined;
+  /** Externally controlled X zoom (e.g., from auto-align). */
+  readonly xZoom?: number | undefined;
+  readonly onViewportChange?:
+    | ((fileName: string, xCenter: number, xZoom: number) => void)
+    | undefined;
 }
 
 export function ElectropherogramWidget({
+  fileName,
   label,
   channelData,
   channelDyeName,
   standardData,
   standardDyeName,
+  xCenter: externalXCenter,
+  xZoom: externalXZoom,
+  onViewportChange,
 }: ElectropherogramWidgetProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [yScale, setYScale] = useState(1);
   const [standardYScale, setStandardYScale] = useState(1);
 
-  // Viewport: visible scan range
   const dataLength = channelData.length;
-  const [xCenter, setXCenter] = useState(dataLength / 2);
-  const [xZoom, setXZoom] = useState(1); // 1 = full range visible, >1 = zoomed in
+  const [localXCenter, setLocalXCenter] = useState(dataLength / 2);
+  const [localXZoom, setLocalXZoom] = useState(1);
 
-  // Drag state (not in React state to avoid re-renders during drag)
+  // Use external values when provided, fall back to local state
+  const xCenter = externalXCenter ?? localXCenter;
+  const xZoom = externalXZoom ?? localXZoom;
+
+  // Sync local state when external values change (e.g., auto-align)
+  useEffect(() => {
+    if (externalXCenter !== undefined) setLocalXCenter(externalXCenter);
+  }, [externalXCenter]);
+  useEffect(() => {
+    if (externalXZoom !== undefined) setLocalXZoom(externalXZoom);
+  }, [externalXZoom]);
+
+  const setXCenter = useCallback(
+    (value: number | ((prev: number) => number)) => {
+      setLocalXCenter((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        onViewportChange?.(fileName, next, localXZoom);
+        return next;
+      });
+    },
+    [fileName, localXZoom, onViewportChange],
+  );
+
+  const setXZoom = useCallback(
+    (value: number | ((prev: number) => number)) => {
+      setLocalXZoom((prev) => {
+        const next = typeof value === "function" ? value(prev) : value;
+        onViewportChange?.(fileName, localXCenter, next);
+        return next;
+      });
+    },
+    [fileName, localXCenter, onViewportChange],
+  );
+
   const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);
 
   const computeViewport = useCallback((): Viewport => {
@@ -52,7 +96,6 @@ export function ElectropherogramWidget({
     let start = xCenter - halfVisible;
     let end = xCenter + halfVisible;
 
-    // Clamp to data bounds
     if (start < 0) {
       end -= start;
       start = 0;
@@ -116,8 +159,8 @@ export function ElectropherogramWidget({
 
   // Reset viewport when data changes
   useEffect(() => {
-    setXCenter(dataLength / 2);
-    setXZoom(1);
+    setLocalXCenter(dataLength / 2);
+    setLocalXZoom(1);
   }, [dataLength]);
 
   // --- Mouse interaction ---
@@ -147,7 +190,7 @@ export function ElectropherogramWidget({
       const scanDelta = pixelToScan(dx);
       setXCenter(dragRef.current.startCenter - scanDelta);
     },
-    [pixelToScan],
+    [pixelToScan, setXCenter],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -158,15 +201,16 @@ export function ElectropherogramWidget({
     dragRef.current = null;
   }, []);
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const direction = e.deltaY > 0 ? -1 : 1;
-    setXZoom((prev) => {
-      return Math.max(1, Math.min(MAX_X_ZOOM, prev * (1 + direction * ZOOM_WHEEL_FACTOR)));
-    });
-  }, []);
-
-  const xZoomMax = MAX_X_ZOOM;
+  const handleWheel = useCallback(
+    (e: React.WheelEvent<HTMLCanvasElement>) => {
+      e.preventDefault();
+      const direction = e.deltaY > 0 ? -1 : 1;
+      setXZoom((prev) =>
+        Math.max(1, Math.min(MAX_X_ZOOM, prev * (1 + direction * ZOOM_WHEEL_FACTOR))),
+      );
+    },
+    [setXZoom],
+  );
 
   return (
     <div className="electropherogram-widget">
@@ -217,7 +261,7 @@ export function ElectropherogramWidget({
           <input
             type="range"
             min="1"
-            max={xZoomMax}
+            max={MAX_X_ZOOM}
             step="0.1"
             value={xZoom}
             onChange={(e) => setXZoom(Number(e.target.value))}

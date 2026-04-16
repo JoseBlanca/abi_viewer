@@ -32,6 +32,28 @@ body {
   font-weight: 600;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.auto-align-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid #0066ff;
+  border-radius: 4px;
+  background: #0066ff;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.auto-align-btn:hover {
+  background: #0052cc;
+}
+
 /* Channel selector */
 
 .channel-selector {
