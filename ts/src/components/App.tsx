@@ -42,6 +42,8 @@ export function App() {
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
 
   const channelDyeName = dyeNames[selectedChannel - 1] ?? "";
+  const standardDyeName = dyeNames[standardChannel - 1] ?? "";
+  const showStandard = standardChannel > 0 && standardChannel !== selectedChannel;
 
   return (
     <div className="app">
@@ -67,6 +69,8 @@ export function App() {
               const channelData = channels.get(selectedChannel);
               if (!channelData) return null;
 
+              const standardData = showStandard ? (channels.get(standardChannel) ?? null) : null;
+
               const well = abif.well ?? "";
               const sampleName = abif.sampleName ?? name;
               const widgetLabel = well ? `${well} — ${sampleName}` : sampleName;
@@ -75,8 +79,10 @@ export function App() {
                 <ElectropherogramWidget
                   key={name}
                   label={widgetLabel}
-                  data={channelData}
-                  dyeName={channelDyeName}
+                  channelData={channelData}
+                  channelDyeName={channelDyeName}
+                  standardData={standardData}
+                  standardDyeName={standardDyeName}
                 />
               );
             })}

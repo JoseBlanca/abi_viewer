@@ -3,19 +3,28 @@
  * No React dependency — takes a CanvasRenderingContext2D and data.
  */
 
-export interface TraceRenderOptions {
+export interface Trace {
   /** Signal data (fluorescence intensity per scan). */
   readonly data: Int16Array;
+  /** Y-axis scale factor (1 = fit to max, >1 = zoom in on peaks). */
+  readonly yScale: number;
+  /** Stroke color for the trace line. */
+  readonly color: string;
+  /** Line width. */
+  readonly lineWidth: number;
+  /** Global alpha (opacity, 0-1). */
+  readonly alpha: number;
+}
+
+export interface RenderOptions {
+  /** Primary trace (the selected channel). */
+  readonly traces: readonly Trace[];
   /** Canvas width in pixels. */
   readonly width: number;
   /** Canvas height in pixels. */
   readonly height: number;
-  /** Y-axis scale factor (1 = fit to max, >1 = zoom in on peaks). */
-  readonly yScale: number;
   /** X-axis offset in scan units (for manual alignment). */
   readonly xOffset: number;
-  /** Stroke color for the trace line. */
-  readonly color: string;
   /** Label shown in the top-left corner. */
   readonly label: string;
 }
@@ -27,8 +36,8 @@ const LABEL_FONT = "12px system-ui, sans-serif";
 const AXIS_FONT = "10px system-ui, sans-serif";
 const GRID_COLOR = "#eee";
 
-export function renderTrace(ctx: CanvasRenderingContext2D, opts: TraceRenderOptions): void {
-  const { data, width, height, yScale, xOffset, color, label } = opts;
+export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: RenderOptions): void {
+  const { traces, width, height, xOffset, label } = opts;
 
   const plotLeft = PADDING.left;
   const plotRight = width - PADDING.right;
@@ -41,26 +50,32 @@ export function renderTrace(ctx: CanvasRenderingContext2D, opts: TraceRenderOpti
   ctx.fillStyle = BACKGROUND;
   ctx.fillRect(0, 0, width, height);
 
-  if (data.length === 0) {
+  if (traces.length === 0) {
     ctx.fillStyle = AXIS_COLOR;
     ctx.font = LABEL_FONT;
     ctx.fillText("No data", plotLeft, plotTop + 20);
     return;
   }
 
-  // Compute Y range: scale around the positive range
-  const yMax = computeYMax(data, yScale);
-  const yMin = -yMax * 0.05; // small negative margin
+  // Use the first trace for axis range
+  const primaryTrace = traces[0];
+  if (!primaryTrace || primaryTrace.data.length === 0) return;
 
   // X range accounting for offset
+  const maxLen = Math.max(...traces.map((t) => t.data.length));
   const xStart = Math.max(0, Math.round(xOffset));
-  const xEnd = data.length;
+  const xEnd = maxLen;
   const xRange = xEnd - xStart;
+  if (xRange <= 0) return;
+
+  // Y axis uses primary trace scale
+  const primaryYMax = computeYMax(primaryTrace.data, primaryTrace.yScale);
+  const primaryYMin = -primaryYMax * 0.05;
 
   // Draw grid and axes
-  drawYAxis(ctx, plotLeft, plotTop, plotBottom, plotHeight, yMin, yMax);
+  drawYAxis(ctx, plotLeft, plotTop, plotBottom, plotHeight, primaryYMin, primaryYMax);
   drawXAxis(ctx, plotLeft, plotRight, plotBottom, xStart, xEnd);
-  drawGrid(ctx, plotLeft, plotRight, plotTop, plotBottom, plotHeight, yMin, yMax);
+  drawGrid(ctx, plotLeft, plotRight, plotBottom, plotHeight);
 
   // Clip to plot area
   ctx.save();
@@ -68,25 +83,37 @@ export function renderTrace(ctx: CanvasRenderingContext2D, opts: TraceRenderOpti
   ctx.rect(plotLeft, plotTop, plotWidth, plotHeight);
   ctx.clip();
 
-  // Draw trace
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
+  // Draw traces back-to-front (standard first, then primary on top)
+  for (let t = traces.length - 1; t >= 0; t--) {
+    const trace = traces[t];
+    if (!trace || trace.data.length === 0) continue;
 
-  let first = true;
-  for (let i = xStart; i < xEnd; i++) {
-    const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
-    const value = data[i] ?? 0;
-    const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
+    const yMax = computeYMax(trace.data, trace.yScale);
+    const yMin = -yMax * 0.05;
 
-    if (first) {
-      ctx.moveTo(x, y);
-      first = false;
-    } else {
-      ctx.lineTo(x, y);
+    ctx.save();
+    ctx.globalAlpha = trace.alpha;
+    ctx.strokeStyle = trace.color;
+    ctx.lineWidth = trace.lineWidth;
+    ctx.beginPath();
+
+    let first = true;
+    for (let i = xStart; i < trace.data.length; i++) {
+      const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
+      const value = trace.data[i] ?? 0;
+      const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
+
+      if (first) {
+        ctx.moveTo(x, y);
+        first = false;
+      } else {
+        ctx.lineTo(x, y);
+      }
     }
+    ctx.stroke();
+    ctx.restore();
   }
-  ctx.stroke();
+
   ctx.restore();
 
   // Label
@@ -100,7 +127,6 @@ function computeYMax(data: Int16Array, yScale: number): number {
   for (const v of data) {
     if (v > max) max = v;
   }
-  // With yScale=1, show the full range. yScale>1 zooms in (lowers yMax).
   const scaled = max / yScale;
   return Math.max(scaled, 1);
 }
@@ -121,7 +147,6 @@ function drawYAxis(
   ctx.lineTo(plotLeft, plotBottom);
   ctx.stroke();
 
-  // Y tick labels
   ctx.fillStyle = AXIS_COLOR;
   ctx.font = AXIS_FONT;
   ctx.textAlign = "right";
@@ -153,7 +178,6 @@ function drawXAxis(
   ctx.lineTo(plotRight, plotBottom);
   ctx.stroke();
 
-  // X tick labels
   ctx.fillStyle = AXIS_COLOR;
   ctx.font = AXIS_FONT;
   ctx.textAlign = "center";
@@ -175,11 +199,8 @@ function drawGrid(
   ctx: CanvasRenderingContext2D,
   plotLeft: number,
   plotRight: number,
-  _plotTop: number,
   plotBottom: number,
   plotHeight: number,
-  _yMin: number,
-  _yMax: number,
 ): void {
   ctx.strokeStyle = GRID_COLOR;
   ctx.lineWidth = 0.5;

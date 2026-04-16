@@ -120,6 +120,11 @@ body {
   width: 140px;
 }
 
+.control-label {
+  font-weight: 600;
+  min-width: 52px;
+}
+
 .control-value {
   min-width: 42px;
   text-align: right;
