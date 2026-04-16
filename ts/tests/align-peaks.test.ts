@@ -88,14 +88,24 @@ describe("transformToViewport", () => {
   it("returns default viewport for identity transform", () => {
     const vp = transformToViewport({ scale: 1, offset: 0 }, 9000);
     expect(vp.xCenter).toBeCloseTo(4500);
-    expect(vp.xZoom).toBeCloseTo(1);
+    expect(vp.xZoom).toBe(1);
   });
 
-  it("clamps xZoom to [1, 10]", () => {
-    const vp = transformToViewport({ scale: 0.5, offset: 0 }, 9000);
+  it("always returns xZoom=1 (zoom is shared via lock)", () => {
+    const vp = transformToViewport({ scale: 1.05, offset: 20 }, 9000);
     expect(vp.xZoom).toBe(1);
+  });
 
-    const vp2 = transformToViewport({ scale: 20, offset: 0 }, 9000);
-    expect(vp2.xZoom).toBe(10);
+  it("shifts xCenter to compensate for offset", () => {
+    // offset=20 means sample peaks appear 20 scans earlier than reference.
+    // Viewport should shift right to show later scans.
+    const vp = transformToViewport({ scale: 1, offset: 20 }, 9000);
+    expect(vp.xCenter).toBeCloseTo(4500 + 20);
+  });
+
+  it("accounts for scale when computing shift", () => {
+    const vp = transformToViewport({ scale: 1.05, offset: 50 }, 9000);
+    // shift = offset / scale = 50 / 1.05 ≈ 47.6
+    expect(vp.xCenter).toBeCloseTo(4500 + 50 / 1.05, 0);
   });
 });

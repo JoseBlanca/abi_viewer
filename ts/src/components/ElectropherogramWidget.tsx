@@ -22,7 +22,8 @@ function dyeColor(dyeName: string): string {
 export interface ViewportCommand {
   readonly version: number;
   readonly xCenter: number;
-  readonly xZoom: number;
+  /** If omitted, the current zoom is preserved. */
+  readonly xZoom?: number | undefined;
 }
 
 /** Methods exposed to the parent via ref for synchronous locked-widget operations. */
@@ -157,7 +158,9 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       if (viewportCommand && viewportCommand.version !== appliedVersionRef.current) {
         appliedVersionRef.current = viewportCommand.version;
         setXCenter(viewportCommand.xCenter);
-        setXZoom(viewportCommand.xZoom);
+        if (viewportCommand.xZoom !== undefined) {
+          setXZoom(viewportCommand.xZoom);
+        }
       }
     }, [viewportCommand, setXCenter, setXZoom]);
 

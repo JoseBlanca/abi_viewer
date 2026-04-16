@@ -28,8 +28,9 @@ const OUTLIER_RESIDUAL_FACTOR = 2.5;
 /**
  * Compute the affine transformation that aligns sample peaks to reference peaks.
  *
- * Peaks are matched by rank order (both sorted by position). If an outlier pair
- * has a residual > 2.5x the median, it is dropped and the model is refit.
+ * Peaks are matched by nearest-neighbor: for each reference peak, the closest
+ * sample peak within a tolerance is matched. This is robust to missing or extra
+ * peaks. After the initial fit, outlier pairs are rejected and the model is refit.
  *
  * @returns The alignment result, or null if too few peaks to fit.
  */
@@ -38,52 +39,108 @@ export function computeAlignment(refPeaks: Peak[], samplePeaks: Peak[]): Alignme
     return null;
   }
 
-  // Match by rank order (both already sorted by position)
-  const n = Math.min(refPeaks.length, samplePeaks.length);
-  let refPositions = refPeaks.slice(0, n).map((p) => p.position);
-  let samplePositions = samplePeaks.slice(0, n).map((p) => p.position);
+  const matched = matchNearestNeighbor(refPeaks, samplePeaks);
+  if (matched.length < MIN_PEAKS_FOR_ALIGNMENT) return null;
 
-  // First fit
+  const refPositions = matched.map((m) => m.ref);
+  const samplePositions = matched.map((m) => m.sample);
+
   const initialFit = fitAffine(refPositions, samplePositions);
   if (!initialFit) return null;
-  let transform = initialFit;
 
-  // Reject outliers and refit
-  const residuals = refPositions.map((r, i) => {
-    const si = samplePositions[i];
-    if (si === undefined) return 0;
-    return Math.abs(r - (initialFit.scale * si + initialFit.offset));
+  // Reject outliers and refit for a more robust estimate
+  const refined = refitWithoutOutliers(refPositions, samplePositions, initialFit);
+
+  return {
+    transform: refined.transform,
+    matchedPeaks: refined.count,
+  };
+}
+
+function refitWithoutOutliers(
+  refPos: number[],
+  samplePos: number[],
+  fit: AffineTransform,
+): { transform: AffineTransform; count: number } {
+  const residuals = refPos.map((r, i) => {
+    const s = samplePos[i];
+    return s !== undefined ? Math.abs(r - (fit.scale * s + fit.offset)) : 0;
   });
-  const medianResidual = median(residuals);
+  const med = median(residuals);
+  if (med <= 0) return { transform: fit, count: refPos.length };
 
-  if (medianResidual > 0) {
-    const threshold = medianResidual * OUTLIER_RESIDUAL_FACTOR;
-    const inlierRef: number[] = [];
-    const inlierSample: number[] = [];
-    for (let i = 0; i < residuals.length; i++) {
-      const res = residuals[i];
-      const rp = refPositions[i];
-      const sp = samplePositions[i];
-      if (res !== undefined && rp !== undefined && sp !== undefined && res <= threshold) {
-        inlierRef.push(rp);
-        inlierSample.push(sp);
-      }
-    }
-
-    if (inlierRef.length >= MIN_PEAKS_FOR_ALIGNMENT) {
-      refPositions = inlierRef;
-      samplePositions = inlierSample;
-      const refit = fitAffine(refPositions, samplePositions);
-      if (refit) {
-        transform = refit;
-      }
+  const threshold = med * OUTLIER_RESIDUAL_FACTOR;
+  const inlierRef: number[] = [];
+  const inlierSample: number[] = [];
+  for (let i = 0; i < residuals.length; i++) {
+    const rp = refPos[i];
+    const sp = samplePos[i];
+    if ((residuals[i] ?? 0) <= threshold && rp !== undefined && sp !== undefined) {
+      inlierRef.push(rp);
+      inlierSample.push(sp);
     }
   }
 
-  return {
-    transform,
-    matchedPeaks: refPositions.length,
-  };
+  if (inlierRef.length < MIN_PEAKS_FOR_ALIGNMENT) return { transform: fit, count: refPos.length };
+
+  const refit = fitAffine(inlierRef, inlierSample);
+  return refit
+    ? { transform: refit, count: inlierRef.length }
+    : { transform: fit, count: refPos.length };
+}
+
+/**
+ * Match reference peaks to sample peaks by nearest neighbor.
+ *
+ * For each reference peak, finds the closest unmatched sample peak.
+ * Both lists must be sorted by position. A maximum distance tolerance is
+ * applied (10% of the total scan range spanned by the reference peaks).
+ */
+function findNearestUnused(
+  position: number,
+  candidates: Peak[],
+  used: Set<number>,
+  maxDistance: number,
+): number {
+  let bestIdx = -1;
+  let bestDist = maxDistance;
+  for (let j = 0; j < candidates.length; j++) {
+    if (used.has(j)) continue;
+    const cp = candidates[j];
+    if (!cp) continue;
+    const dist = Math.abs(position - cp.position);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = j;
+    }
+  }
+  return bestIdx;
+}
+
+function matchNearestNeighbor(
+  refPeaks: Peak[],
+  samplePeaks: Peak[],
+): { ref: number; sample: number }[] {
+  const refFirst = refPeaks[0];
+  const refLast = refPeaks[refPeaks.length - 1];
+  if (!refFirst || !refLast) return [];
+
+  const refSpan = refLast.position - refFirst.position;
+  const maxDistance = Math.max(100, refSpan * 0.1);
+
+  const matched: { ref: number; sample: number }[] = [];
+  const usedSample = new Set<number>();
+
+  for (const rp of refPeaks) {
+    const bestIdx = findNearestUnused(rp.position, samplePeaks, usedSample, maxDistance);
+    const sp = bestIdx >= 0 ? samplePeaks[bestIdx] : undefined;
+    if (sp) {
+      matched.push({ ref: rp.position, sample: sp.position });
+      usedSample.add(bestIdx);
+    }
+  }
+
+  return matched;
 }
 
 /**
@@ -131,9 +188,21 @@ function median(values: number[]): number {
 }
 
 /**
+ * Filter peaks to exclude the injection artifact region at the start of the run.
+ * Size standard peaks are always in the later portion of the electropherogram.
+ */
+function filterInjectionRegion(peaks: Peak[], dataLength: number): Peak[] {
+  const minPosition = Math.round(dataLength * 0.25);
+  return peaks.filter((p) => p.position >= minPosition);
+}
+
+/**
  * Auto-align multiple samples' standard channels to the first sample.
  *
- * @returns A map from sample index to viewport parameters (xCenter, xZoom).
+ * Zooms into the standard peaks region so the alignment is immediately visible,
+ * and shifts xCenter per sample to align the peaks.
+ *
+ * @returns A map from sample name to viewport parameters.
  */
 export function autoAlignSamples(
   standardChannels: { name: string; data: Int16Array }[],
@@ -143,20 +212,37 @@ export function autoAlignSamples(
   const ref = standardChannels[0];
   if (!ref) return result;
 
-  const refPeaks = detectPeaks(ref.data);
-  result.set(ref.name, { xCenter: ref.data.length / 2, xZoom: 1 });
+  const refPeaks = filterInjectionRegion(detectPeaks(ref.data), ref.data.length);
+  if (refPeaks.length === 0) return result;
+
+  // Compute zoom to show just the standard peaks region (with 20% margin)
+  const firstPeak = refPeaks[0];
+  const lastPeak = refPeaks[refPeaks.length - 1];
+  if (!firstPeak || !lastPeak) return result;
+
+  const peakSpan = lastPeak.position - firstPeak.position;
+  const margin = peakSpan * 0.2;
+  const viewSpan = peakSpan + 2 * margin;
+  const xZoom = Math.max(1, Math.min(10, ref.data.length / viewSpan));
+  const refCenter = (firstPeak.position + lastPeak.position) / 2;
+
+  result.set(ref.name, { xCenter: refCenter, xZoom });
 
   for (let i = 1; i < standardChannels.length; i++) {
     const sample = standardChannels[i];
     if (!sample) continue;
 
-    const samplePeaks = detectPeaks(sample.data);
+    const samplePeaks = filterInjectionRegion(detectPeaks(sample.data), sample.data.length);
     const alignment = computeAlignment(refPeaks, samplePeaks);
 
     if (alignment) {
-      result.set(sample.name, transformToViewport(alignment.transform, sample.data.length));
+      // The sample center that corresponds to refCenter in the affine model:
+      // scan_ref = scale * scan_sample + offset
+      // => scan_sample = (scan_ref - offset) / scale
+      const sampleCenter = (refCenter - alignment.transform.offset) / alignment.transform.scale;
+      result.set(sample.name, { xCenter: sampleCenter, xZoom });
     } else {
-      result.set(sample.name, { xCenter: sample.data.length / 2, xZoom: 1 });
+      result.set(sample.name, { xCenter: refCenter, xZoom });
     }
   }
 
@@ -164,28 +250,26 @@ export function autoAlignSamples(
 }
 
 /**
- * Convert an affine transform to viewport parameters relative to a data length.
+ * Convert an affine transform to an xCenter shift for alignment.
  *
- * @returns xCenter and xZoom that, when applied to the viewport, align the sample
- *          to the reference.
+ * The transform maps: scan_ref = scale * scan_sample + offset
+ *
+ * When all widgets share the same xZoom (locked), alignment only needs an
+ * xCenter offset. The sample peaks are shifted by `offset` scans relative to
+ * the reference, so we shift the sample viewport by the same amount to
+ * compensate.
+ *
+ * @returns xCenter and xZoom (zoom is always 1 — zoom is shared via lock).
  */
 export function transformToViewport(
   transform: AffineTransform,
   dataLength: number,
 ): { xCenter: number; xZoom: number } {
-  // The transform maps: scan_ref = scale * scan_sample + offset
-  // We want to show sample scans such that they line up with the reference.
-  //
-  // The visible window in reference space is [0, dataLength].
-  // In sample space, this maps to: scan_sample = (scan_ref - offset) / scale
-  //
-  // So the center of the reference range (dataLength/2) maps to:
+  // Reference viewport is centered at dataLength/2.
+  // The offset tells us: sample peaks appear `offset` scans earlier (if positive)
+  // or later (if negative) than in the reference.
+  // To align, shift the sample viewport center by offset/scale.
   const refCenter = dataLength / 2;
-  const sampleCenter = (refCenter - transform.offset) / transform.scale;
-
-  // The zoom: if scale > 1, the sample is more spread out than the reference,
-  // so we need to zoom in (compress) to match. xZoom = scale.
-  const xZoom = Math.max(1, Math.min(10, transform.scale));
-
-  return { xCenter: sampleCenter, xZoom };
+  const shift = transform.offset / transform.scale;
+  return { xCenter: refCenter + shift, xZoom: 1 };
 }

@@ -50,7 +50,7 @@ export function App() {
   );
 
   const sendViewportCommands = useCallback(
-    (entries: Map<string, { xCenter: number; xZoom: number }>) => {
+    (entries: Map<string, { xCenter: number; xZoom?: number | undefined }>) => {
       commandVersionRef.current += 1;
       const version = commandVersionRef.current;
       const commands = new Map<string, ViewportCommand>();
