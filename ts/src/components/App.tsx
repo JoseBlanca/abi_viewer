@@ -15,6 +15,9 @@ interface ViewportState {
   xZoom: number;
 }
 
+const ZOOM_STEP = 1.3;
+const MAX_X_ZOOM = 10;
+
 export function App() {
   const [files, setFiles] = useState<LoadedFile[]>([]);
   const [selectedChannel, setSelectedChannel] = useState(1);
@@ -67,6 +70,27 @@ export function App() {
     setViewports(aligned);
   }, [files, standardChannel]);
 
+  const handleZoomAll = useCallback(
+    (direction: 1 | -1) => {
+      setViewports((prev) => {
+        const next = new Map(prev);
+        for (const file of files) {
+          const vp = next.get(file.name) ?? {
+            xCenter: file.abif.rawChannels.get(1)?.length ?? 0,
+            xZoom: 1,
+          };
+          const newZoom = Math.max(
+            1,
+            Math.min(MAX_X_ZOOM, vp.xZoom * (direction === 1 ? ZOOM_STEP : 1 / ZOOM_STEP)),
+          );
+          next.set(file.name, { ...vp, xZoom: newZoom });
+        }
+        return next;
+      });
+    },
+    [files],
+  );
+
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
   const channelDyeName = dyeNames[selectedChannel - 1] ?? "";
   const standardDyeName = dyeNames[standardChannel - 1] ?? "";
@@ -76,20 +100,13 @@ export function App() {
     <div className="app">
       <header className="app-header">
         <h1>ABI Viewer</h1>
-        <div className="header-controls">
-          <ChannelSelector
-            dyeNames={dyeNames}
-            selectedChannel={selectedChannel}
-            onChannelChange={setSelectedChannel}
-            standardChannel={standardChannel}
-            onStandardChange={setStandardChannel}
-          />
-          {files.length >= 2 && standardChannel > 0 && (
-            <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
-              Auto-align
-            </button>
-          )}
-        </div>
+        <ChannelSelector
+          dyeNames={dyeNames}
+          selectedChannel={selectedChannel}
+          onChannelChange={setSelectedChannel}
+          standardChannel={standardChannel}
+          onStandardChange={setStandardChannel}
+        />
       </header>
 
       {files.length === 0 ? (
@@ -97,6 +114,24 @@ export function App() {
       ) : (
         <>
           <FileUpload onFilesLoaded={handleFilesLoaded} />
+          {files.length > 0 && (
+            <div className="toolbar">
+              <div className="zoom-all">
+                <button type="button" className="toolbar-btn" onClick={() => handleZoomAll(1)}>
+                  +
+                </button>
+                <span className="toolbar-label">zoom</span>
+                <button type="button" className="toolbar-btn" onClick={() => handleZoomAll(-1)}>
+                  &minus;
+                </button>
+              </div>
+              {files.length >= 2 && standardChannel > 0 && (
+                <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
+                  Auto-align
+                </button>
+              )}
+            </div>
+          )}
           <div className="widget-list">
             {files.map(({ name, abif }) => {
               const channels = abif.rawChannels;
