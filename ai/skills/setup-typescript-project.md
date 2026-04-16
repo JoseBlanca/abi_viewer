@@ -8,7 +8,7 @@ using modern tooling.
 
 | Role             | Tool       | Why                                                        |
 |------------------|------------|------------------------------------------------------------|
-| Package manager  | **pnpm**   | Strict lockfile, deterministic, fast, disk-efficient       |
+| Package manager  | **npm**    | Ships with Node.js, universal, widest tutorial coverage    |
 | Build & dev      | **Vite**   | Fast HMR, native ESM, zero-config TypeScript support       |
 | Test runner      | **Vitest** | Native Vite integration, fast, good integration test story |
 | Lint & format    | **Biome**  | Single tool for both, very fast, good TS defaults          |
@@ -17,9 +17,9 @@ using modern tooling.
 ## Step 1 — Scaffold the project
 
 ```bash
-pnpm create vite@latest <project-name> -- --template vanilla-ts
+npm create vite@latest <project-name> -- --template vanilla-ts
 cd <project-name>
-pnpm install
+npm install
 ```
 
 Remove boilerplate files that Vite generates (`counter.ts`, `style.css` contents,
@@ -49,23 +49,19 @@ Replace `tsconfig.json` with:
 
     // Module interop
     "isolatedModules": true,
-    "esModuleInterop": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "moduleDetection": "force",
+    "erasableSyntaxOnly": true,
 
     // Output
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "outDir": "dist",
+    "noEmit": true,
+    "sourceMap": true
 
-    // Path aliases (optional, keep minimal)
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    }
+    // Path aliases — configure in vite.config.ts, not here.
+    // baseUrl/paths are deprecated in TypeScript 6+.
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src"]
 }
 ```
 
@@ -87,8 +83,8 @@ export default defineConfig({
 ## Step 3 — Install and configure Biome
 
 ```bash
-pnpm add -D @biomejs/biome
-pnpm biome init
+npm add -D @biomejs/biome
+npx biome init
 ```
 
 Replace the generated `biome.json` with:
@@ -135,7 +131,7 @@ Key rules:
 ## Step 4 — Install and configure Vitest
 
 ```bash
-pnpm add -D vitest
+npm add -D vitest
 ```
 
 Add to `vite.config.ts`:
@@ -341,12 +337,12 @@ type ParseResult =
 
 After running this skill, verify:
 
-- [ ] `pnpm install` succeeds with no warnings
-- [ ] `pnpm dev` starts Vite dev server
-- [ ] `pnpm build` compiles with no type errors and produces `dist/`
-- [ ] `pnpm test` runs and passes (at least one smoke test exists)
-- [ ] `pnpm lint` passes with no warnings
-- [ ] `pnpm check` runs types + lint + tests in one command
+- [ ] `npm install` succeeds with no warnings
+- [ ] `npm run dev` starts Vite dev server
+- [ ] `npm run build` compiles with no type errors and produces `dist/`
+- [ ] `npm test` runs and passes (at least one smoke test exists)
+- [ ] `npm run lint` passes with no warnings
+- [ ] `npm run check` runs types + lint + tests in one command
 - [ ] `tsconfig.json` has `strict: true` and `noUncheckedIndexedAccess: true`
 - [ ] No `any` types in source code
 - [ ] No barrel `index.ts` files unless justified

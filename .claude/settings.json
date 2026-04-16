@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(xxd -l 128 /home/jose/devel/abi_viewer/example_abi_files/DANI_NOV_A11.fsa)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(npm --version)"
     ]
   }
 }

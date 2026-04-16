@@ -1,0 +1,25 @@
+{
+  "name": "abi-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check --fix .",
+    "format": "biome format --write .",
+    "check": "tsc --noEmit && biome check . && vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.12",
+    "@types/node": "^25.6.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.4",
+    "vitest": "^4.1.4"
+  }
+}
