@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Trace } from "../lib/render-electropherogram.ts";
-import { renderElectropherogram } from "../lib/render-electropherogram.ts";
+import type { Trace, Viewport } from "../lib/render-electropherogram.ts";
+import { PADDING, renderElectropherogram } from "../lib/render-electropherogram.ts";
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 200;
+const MAX_X_ZOOM = 10;
+const ZOOM_WHEEL_FACTOR = 0.1;
 
 const DYE_COLORS: Record<string, string> = {
   "6-FAM": "#0066ff",
@@ -35,7 +37,34 @@ export function ElectropherogramWidget({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [yScale, setYScale] = useState(1);
   const [standardYScale, setStandardYScale] = useState(1);
-  const [xOffset, setXOffset] = useState(0);
+
+  // Viewport: visible scan range
+  const dataLength = channelData.length;
+  const [xCenter, setXCenter] = useState(dataLength / 2);
+  const [xZoom, setXZoom] = useState(1); // 1 = full range visible, >1 = zoomed in
+
+  // Drag state (not in React state to avoid re-renders during drag)
+  const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);
+
+  const computeViewport = useCallback((): Viewport => {
+    const visibleScans = dataLength / xZoom;
+    const halfVisible = visibleScans / 2;
+    let start = xCenter - halfVisible;
+    let end = xCenter + halfVisible;
+
+    // Clamp to data bounds
+    if (start < 0) {
+      end -= start;
+      start = 0;
+    }
+    if (end > dataLength) {
+      start -= end - dataLength;
+      end = dataLength;
+      start = Math.max(0, start);
+    }
+
+    return { xStart: start, xEnd: end };
+  }, [dataLength, xCenter, xZoom]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -67,7 +96,7 @@ export function ElectropherogramWidget({
       traces,
       width: CANVAS_WIDTH,
       height: CANVAS_HEIGHT,
-      xOffset,
+      viewport: computeViewport(),
       label,
     });
   }, [
@@ -77,7 +106,7 @@ export function ElectropherogramWidget({
     standardDyeName,
     yScale,
     standardYScale,
-    xOffset,
+    computeViewport,
     label,
   ]);
 
@@ -85,9 +114,73 @@ export function ElectropherogramWidget({
     draw();
   }, [draw]);
 
+  // Reset viewport when data changes
+  useEffect(() => {
+    setXCenter(dataLength / 2);
+    setXZoom(1);
+  }, [dataLength]);
+
+  // --- Mouse interaction ---
+
+  const pixelToScan = useCallback(
+    (pixelDeltaX: number): number => {
+      const plotWidth = CANVAS_WIDTH - PADDING.left - PADDING.right;
+      const viewport = computeViewport();
+      const visibleScans = viewport.xEnd - viewport.xStart;
+      return (pixelDeltaX / plotWidth) * visibleScans;
+    },
+    [computeViewport],
+  );
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      dragRef.current = { startX: e.clientX, startCenter: xCenter };
+      e.preventDefault();
+    },
+    [xCenter],
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (!dragRef.current) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const scanDelta = pixelToScan(dx);
+      setXCenter(dragRef.current.startCenter - scanDelta);
+    },
+    [pixelToScan],
+  );
+
+  const handleMouseUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const direction = e.deltaY > 0 ? -1 : 1;
+    setXZoom((prev) => {
+      return Math.max(1, Math.min(MAX_X_ZOOM, prev * (1 + direction * ZOOM_WHEEL_FACTOR)));
+    });
+  }, []);
+
+  const xZoomMax = MAX_X_ZOOM;
+
   return (
     <div className="electropherogram-widget">
-      <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />
+      <canvas
+        ref={canvasRef}
+        width={CANVAS_WIDTH}
+        height={CANVAS_HEIGHT}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+        onWheel={handleWheel}
+        style={{ cursor: dragRef.current ? "grabbing" : "grab" }}
+      />
       <div className="widget-controls">
         <label>
           <span className="control-label" style={{ color: dyeColor(channelDyeName) }}>
@@ -120,16 +213,16 @@ export function ElectropherogramWidget({
           </label>
         )}
         <label>
-          X offset
+          X zoom
           <input
             type="range"
-            min={-Math.round(channelData.length * 0.3)}
-            max={Math.round(channelData.length * 0.3)}
-            step="1"
-            value={xOffset}
-            onChange={(e) => setXOffset(Number(e.target.value))}
+            min="1"
+            max={xZoomMax}
+            step="0.1"
+            value={xZoom}
+            onChange={(e) => setXZoom(Number(e.target.value))}
           />
-          <span className="control-value">{xOffset}</span>
+          <span className="control-value">{xZoom.toFixed(1)}x</span>
         </label>
       </div>
     </div>

@@ -16,20 +16,26 @@ export interface Trace {
   readonly alpha: number;
 }
 
+export interface Viewport {
+  /** First visible scan index. */
+  readonly xStart: number;
+  /** Last visible scan index (exclusive). */
+  readonly xEnd: number;
+}
+
 export interface RenderOptions {
-  /** Primary trace (the selected channel). */
   readonly traces: readonly Trace[];
-  /** Canvas width in pixels. */
   readonly width: number;
-  /** Canvas height in pixels. */
   readonly height: number;
-  /** X-axis offset in scan units (for manual alignment). */
-  readonly xOffset: number;
+  /** Visible scan range. */
+  readonly viewport: Viewport;
   /** Label shown in the top-left corner. */
   readonly label: string;
 }
 
-const PADDING = { top: 24, right: 12, bottom: 28, left: 50 };
+/** Pixel padding around the plot area. */
+export const PADDING = { top: 24, right: 12, bottom: 28, left: 50 } as const;
+
 const AXIS_COLOR = "#999";
 const BACKGROUND = "#fafafa";
 const LABEL_FONT = "12px system-ui, sans-serif";
@@ -37,7 +43,8 @@ const AXIS_FONT = "10px system-ui, sans-serif";
 const GRID_COLOR = "#eee";
 
 export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: RenderOptions): void {
-  const { traces, width, height, xOffset, label } = opts;
+  const { traces, width, height, viewport, label } = opts;
+  const { xStart, xEnd } = viewport;
 
   const plotLeft = PADDING.left;
   const plotRight = width - PADDING.right;
@@ -57,14 +64,9 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
     return;
   }
 
-  // Use the first trace for axis range
   const primaryTrace = traces[0];
   if (!primaryTrace || primaryTrace.data.length === 0) return;
 
-  // X range accounting for offset
-  const maxLen = Math.max(...traces.map((t) => t.data.length));
-  const xStart = Math.max(0, Math.round(xOffset));
-  const xEnd = maxLen;
   const xRange = xEnd - xStart;
   if (xRange <= 0) return;
 
@@ -72,7 +74,6 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
   const primaryYMax = computeYMax(primaryTrace.data, primaryTrace.yScale);
   const primaryYMin = -primaryYMax * 0.05;
 
-  // Draw grid and axes
   drawYAxis(ctx, plotLeft, plotTop, plotBottom, plotHeight, primaryYMin, primaryYMax);
   drawXAxis(ctx, plotLeft, plotRight, plotBottom, xStart, xEnd);
   drawGrid(ctx, plotLeft, plotRight, plotBottom, plotHeight);
@@ -91,6 +92,10 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
     const yMax = computeYMax(trace.data, trace.yScale);
     const yMin = -yMax * 0.05;
 
+    // Only iterate over the visible range (plus 1 sample margin for line continuity)
+    const iStart = Math.max(0, Math.floor(xStart));
+    const iEnd = Math.min(trace.data.length, Math.ceil(xEnd) + 1);
+
     ctx.save();
     ctx.globalAlpha = trace.alpha;
     ctx.strokeStyle = trace.color;
@@ -98,7 +103,7 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
     ctx.beginPath();
 
     let first = true;
-    for (let i = xStart; i < trace.data.length; i++) {
+    for (let i = iStart; i < iEnd; i++) {
       const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
       const value = trace.data[i] ?? 0;
       const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
