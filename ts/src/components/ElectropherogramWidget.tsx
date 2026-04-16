@@ -25,9 +25,17 @@ export interface ViewportCommand {
   readonly xZoom: number;
 }
 
-/** Methods exposed to the parent via ref for imperative, synchronous operations. */
+/** Methods exposed to the parent via ref for synchronous locked-widget operations. */
 export interface WidgetHandle {
   panBy(delta: number): void;
+  setXZoom(value: number): void;
+  setYScale(value: number): void;
+  setStandardYScale(value: number): void;
+}
+
+export interface WidgetChangeEvent {
+  readonly type: "pan" | "xZoom" | "yScale" | "standardYScale";
+  readonly value: number;
 }
 
 interface ElectropherogramWidgetProps {
@@ -37,7 +45,7 @@ interface ElectropherogramWidgetProps {
   readonly standardData: Int16Array | null;
   readonly standardDyeName: string;
   readonly viewportCommand?: ViewportCommand | undefined;
-  readonly onPanDelta?: ((delta: number) => void) | undefined;
+  readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
 export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramWidgetProps>(
@@ -49,19 +57,18 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       standardData,
       standardDyeName,
       viewportCommand,
-      onPanDelta,
+      onWidgetChange,
     },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [yScale, setYScale] = useState(1);
-    const [standardYScale, setStandardYScale] = useState(1);
+    const [yScale, setYScaleState] = useState(1);
+    const [standardYScale, setStandardYScaleState] = useState(1);
+    const yScaleRef = useRef(1);
+    const standardYScaleRef = useRef(1);
 
     const dataLength = channelData.length;
 
-    // Viewport: refs are the source of truth for drawing. React state mirrors them
-    // for slider UI. Helpers below keep both in sync without overwriting ref values
-    // set imperatively by panBy() or drag handlers.
     const xCenterRef = useRef(dataLength / 2);
     const xZoomRef = useRef(1);
     const [xCenterState, setXCenterState] = useState(dataLength / 2);
@@ -77,7 +84,17 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       setXZoomState(value);
     }, []);
 
-    // --- Imperative drawing (bypasses React) ---
+    const setYScale = useCallback((value: number) => {
+      yScaleRef.current = value;
+      setYScaleState(value);
+    }, []);
+
+    const setStandardYScale = useCallback((value: number) => {
+      standardYScaleRef.current = value;
+      setStandardYScaleState(value);
+    }, []);
+
+    // --- Imperative drawing ---
 
     const drawImmediate = useCallback(() => {
       const canvas = canvasRef.current;
@@ -85,12 +102,10 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      const xc = xCenterRef.current;
-      const xz = xZoomRef.current;
-      const visibleScans = dataLength / xz;
+      const visibleScans = dataLength / xZoomRef.current;
       const half = visibleScans / 2;
-      let start = xc - half;
-      let end = xc + half;
+      let start = xCenterRef.current - half;
+      let end = xCenterRef.current + half;
       if (start < 0) {
         end -= start;
         start = 0;
@@ -105,7 +120,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       const traces: Trace[] = [
         {
           data: channelData,
-          yScale,
+          yScale: yScaleRef.current,
           color: dyeColor(channelDyeName),
           lineWidth: 1.2,
           alpha: 1,
@@ -114,7 +129,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       if (standardData) {
         traces.push({
           data: standardData,
-          yScale: standardYScale,
+          yScale: standardYScaleRef.current,
           color: dyeColor(standardDyeName),
           lineWidth: 0.8,
           alpha: 0.45,
@@ -128,24 +143,12 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
         viewport,
         label,
       });
-    }, [
-      channelData,
-      channelDyeName,
-      standardData,
-      standardDyeName,
-      yScale,
-      standardYScale,
-      dataLength,
-      label,
-    ]);
+    }, [channelData, channelDyeName, standardData, standardDyeName, dataLength, label]);
 
-    // Redraw when React state changes (channel switch, Y-scale slider, etc.)
-    // xCenterState/xZoomState are intentional dependencies: drawImmediate reads from refs
-    // (for performance during drag), but we need to trigger a redraw when state changes.
-    // biome-ignore lint/correctness/useExhaustiveDependencies: viewport state triggers redraw via refs
+    // biome-ignore lint/correctness/useExhaustiveDependencies: state vars trigger redraw; drawImmediate reads refs
     useEffect(() => {
       drawImmediate();
-    }, [drawImmediate, xCenterState, xZoomState]);
+    }, [drawImmediate, xCenterState, xZoomState, yScale, standardYScale]);
 
     // --- Viewport commands (auto-align, global zoom) ---
 
@@ -158,13 +161,12 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       }
     }, [viewportCommand, setXCenter, setXZoom]);
 
-    // Reset when data changes
     useEffect(() => {
       setXCenter(dataLength / 2);
       setXZoom(1);
     }, [dataLength, setXCenter, setXZoom]);
 
-    // --- Imperative handle for lock-pan ---
+    // --- Imperative handle for locked widgets ---
 
     useImperativeHandle(
       ref,
@@ -174,11 +176,26 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
           setXCenterState(xCenterRef.current);
           drawImmediate();
         },
+        setXZoom(value: number) {
+          xZoomRef.current = value;
+          setXZoomState(value);
+          drawImmediate();
+        },
+        setYScale(value: number) {
+          yScaleRef.current = value;
+          setYScaleState(value);
+          drawImmediate();
+        },
+        setStandardYScale(value: number) {
+          standardYScaleRef.current = value;
+          setStandardYScaleState(value);
+          drawImmediate();
+        },
       }),
       [drawImmediate],
     );
 
-    // --- Mouse interaction (ref-based, no React state during drag) ---
+    // --- Mouse interaction ---
 
     const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);
     const rafRef = useRef(0);
@@ -207,27 +224,24 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
         xCenterRef.current = newCenter;
 
         cancelAnimationFrame(rafRef.current);
-        rafRef.current = requestAnimationFrame(() => {
-          drawImmediate();
-        });
+        rafRef.current = requestAnimationFrame(() => drawImmediate());
 
-        onPanDelta?.(delta);
+        onWidgetChange?.({ type: "pan", value: delta });
       },
-      [pixelToScan, drawImmediate, onPanDelta],
+      [pixelToScan, drawImmediate, onWidgetChange],
     );
 
     const handleMouseUp = useCallback(() => {
       if (dragRef.current) {
         dragRef.current = null;
-        // Commit ref → state so sliders and effects pick up the final value
-        setXCenterState(xCenterRef.current); // sync state to ref (ref is already correct);
+        setXCenterState(xCenterRef.current);
       }
     }, []);
 
     const handleMouseLeave = useCallback(() => {
       if (dragRef.current) {
         dragRef.current = null;
-        setXCenterState(xCenterRef.current); // sync state to ref (ref is already correct);
+        setXCenterState(xCenterRef.current);
       }
     }, []);
 
@@ -240,8 +254,33 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
           Math.min(MAX_X_ZOOM, xZoomRef.current * (1 + direction * ZOOM_WHEEL_FACTOR)),
         );
         setXZoom(newZoom);
+        onWidgetChange?.({ type: "xZoom", value: newZoom });
       },
-      [setXZoom],
+      [setXZoom, onWidgetChange],
+    );
+
+    const handleYScaleChange = useCallback(
+      (value: number) => {
+        setYScale(value);
+        onWidgetChange?.({ type: "yScale", value });
+      },
+      [setYScale, onWidgetChange],
+    );
+
+    const handleStandardYScaleChange = useCallback(
+      (value: number) => {
+        setStandardYScale(value);
+        onWidgetChange?.({ type: "standardYScale", value });
+      },
+      [setStandardYScale, onWidgetChange],
+    );
+
+    const handleXZoomSliderChange = useCallback(
+      (value: number) => {
+        setXZoom(value);
+        onWidgetChange?.({ type: "xZoom", value });
+      },
+      [setXZoom, onWidgetChange],
     );
 
     return (
@@ -268,7 +307,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
               max="50"
               step="0.5"
               value={yScale}
-              onChange={(e) => setYScale(Number(e.target.value))}
+              onChange={(e) => handleYScaleChange(Number(e.target.value))}
             />
             <span className="control-value">{yScale.toFixed(1)}x</span>
           </label>
@@ -283,7 +322,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
                 max="50"
                 step="0.5"
                 value={standardYScale}
-                onChange={(e) => setStandardYScale(Number(e.target.value))}
+                onChange={(e) => handleStandardYScaleChange(Number(e.target.value))}
               />
               <span className="control-value">{standardYScale.toFixed(1)}x</span>
             </label>
@@ -296,7 +335,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
               max={MAX_X_ZOOM}
               step="0.1"
               value={xZoomState}
-              onChange={(e) => setXZoom(Number(e.target.value))}
+              onChange={(e) => handleXZoomSliderChange(Number(e.target.value))}
             />
             <span className="control-value">{xZoomState.toFixed(1)}x</span>
           </label>

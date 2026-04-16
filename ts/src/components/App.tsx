@@ -2,7 +2,11 @@ import { useCallback, useRef, useState } from "react";
 import { AbifFile } from "../abi-parser.ts";
 import { autoAlignSamples } from "../lib/align-peaks.ts";
 import { ChannelSelector } from "./ChannelSelector.tsx";
-import type { ViewportCommand, WidgetHandle } from "./ElectropherogramWidget.tsx";
+import type {
+  ViewportCommand,
+  WidgetChangeEvent,
+  WidgetHandle,
+} from "./ElectropherogramWidget.tsx";
 import { ElectropherogramWidget } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
 
@@ -18,12 +22,10 @@ export function App() {
   const [files, setFiles] = useState<LoadedFile[]>([]);
   const [selectedChannel, setSelectedChannel] = useState(1);
   const [standardChannel, setStandardChannel] = useState(0);
-  const [panLocked, setPanLocked] = useState(false);
+  const [widgetsLocked, setWidgetsLocked] = useState(true);
 
   const [viewportCommands, setViewportCommands] = useState<Map<string, ViewportCommand>>(new Map());
   const commandVersionRef = useRef(0);
-
-  // Refs to each widget's imperative handle, keyed by file name
   const widgetRefsMap = useRef(new Map<string, WidgetHandle>());
 
   const handleFilesLoaded = useCallback(
@@ -96,15 +98,29 @@ export function App() {
     [files, selectedChannel, viewportCommands, sendViewportCommands],
   );
 
-  // Lock-pan: called synchronously during drag, directly calls panBy on other widgets
-  const panLockedRef = useRef(panLocked);
-  panLockedRef.current = panLocked;
+  // Locked widgets: broadcast changes from one widget to all others
+  const widgetsLockedRef = useRef(widgetsLocked);
+  widgetsLockedRef.current = widgetsLocked;
 
-  const handlePanDelta = useCallback((sourceName: string, delta: number) => {
-    if (!panLockedRef.current) return;
+  const handleWidgetChange = useCallback((sourceName: string, event: WidgetChangeEvent) => {
+    if (!widgetsLockedRef.current) return;
+
     for (const [name, handle] of widgetRefsMap.current) {
-      if (name !== sourceName) {
-        handle.panBy(delta);
+      if (name === sourceName) continue;
+
+      switch (event.type) {
+        case "pan":
+          handle.panBy(event.value);
+          break;
+        case "xZoom":
+          handle.setXZoom(event.value);
+          break;
+        case "yScale":
+          handle.setYScale(event.value);
+          break;
+        case "standardYScale":
+          handle.setStandardYScale(event.value);
+          break;
       }
     }
   }, []);
@@ -146,10 +162,10 @@ export function App() {
               <label className="toolbar-checkbox">
                 <input
                   type="checkbox"
-                  checked={panLocked}
-                  onChange={(e) => setPanLocked(e.target.checked)}
+                  checked={widgetsLocked}
+                  onChange={(e) => setWidgetsLocked(e.target.checked)}
                 />
-                Lock pan
+                Lock widgets
               </label>
               {files.length >= 2 && standardChannel > 0 && (
                 <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
@@ -186,7 +202,7 @@ export function App() {
                   standardData={standardData}
                   standardDyeName={standardDyeName}
                   viewportCommand={viewportCommands.get(name)}
-                  onPanDelta={(delta) => handlePanDelta(name, delta)}
+                  onWidgetChange={(event) => handleWidgetChange(name, event)}
                 />
               );
             })}
