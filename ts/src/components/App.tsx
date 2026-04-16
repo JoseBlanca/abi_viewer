@@ -15,9 +15,6 @@ interface LoadedFile {
   readonly abif: AbifFile;
 }
 
-const ZOOM_STEP = 1.3;
-const MAX_X_ZOOM = 10;
-
 export function App() {
   const [files, setFiles] = useState<LoadedFile[]>([]);
   const [selectedChannel, setSelectedChannel] = useState(1);
@@ -79,25 +76,6 @@ export function App() {
     sendViewportCommands(aligned);
   }, [files, standardChannel, sendViewportCommands]);
 
-  const handleZoomAll = useCallback(
-    (direction: 1 | -1) => {
-      const entries = new Map<string, { xCenter: number; xZoom: number }>();
-      for (const file of files) {
-        const existing = viewportCommands.get(file.name);
-        const dataLen = file.abif.rawChannels.get(selectedChannel)?.length ?? 0;
-        const currentZoom = existing?.xZoom ?? 1;
-        const currentCenter = existing?.xCenter ?? dataLen / 2;
-        const newZoom = Math.max(
-          1,
-          Math.min(MAX_X_ZOOM, currentZoom * (direction === 1 ? ZOOM_STEP : 1 / ZOOM_STEP)),
-        );
-        entries.set(file.name, { xCenter: currentCenter, xZoom: newZoom });
-      }
-      sendViewportCommands(entries);
-    },
-    [files, selectedChannel, viewportCommands, sendViewportCommands],
-  );
-
   // Locked widgets: broadcast changes from one widget to all others
   const widgetsLockedRef = useRef(widgetsLocked);
   widgetsLockedRef.current = widgetsLocked;
@@ -150,15 +128,6 @@ export function App() {
           <FileUpload onFilesLoaded={handleFilesLoaded} />
           {files.length > 0 && (
             <div className="toolbar">
-              <div className="zoom-all">
-                <button type="button" className="toolbar-btn" onClick={() => handleZoomAll(1)}>
-                  +
-                </button>
-                <span className="toolbar-label">zoom</span>
-                <button type="button" className="toolbar-btn" onClick={() => handleZoomAll(-1)}>
-                  &minus;
-                </button>
-              </div>
               <label className="toolbar-checkbox">
                 <input
                   type="checkbox"
