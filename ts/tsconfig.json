@@ -22,6 +22,9 @@
     "moduleDetection": "force",
     "erasableSyntaxOnly": true,
 
+    /* JSX */
+    "jsx": "react-jsx",
+
     /* Output */
     "noEmit": true,
     "sourceMap": true

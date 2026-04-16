@@ -1,8 +1,10 @@
 /// <reference types="vitest/config" />
 import { resolve } from "node:path";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  plugins: [react()],
   resolve: {
     alias: {
       "@": resolve(import.meta.dirname, "src"),
@@ -15,7 +17,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/main.ts", "src/**/*.d.ts"],
+      exclude: ["src/main.tsx", "src/**/*.d.ts"],
     },
   },
 });
