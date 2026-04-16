@@ -59,6 +59,27 @@ body {
   color: #666;
 }
 
+.empty-state {
+  text-align: center;
+}
+
+.load-examples-btn {
+  margin-top: 12px;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+}
+
+.load-examples-btn:hover {
+  background: #f0f0f0;
+  border-color: #999;
+}
+
 .auto-align-btn {
   padding: 5px 14px;
   font-size: 13px;

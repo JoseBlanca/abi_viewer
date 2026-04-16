@@ -15,6 +15,13 @@ interface LoadedFile {
   readonly abif: AbifFile;
 }
 
+const EXAMPLE_FILES = [
+  "DANI_NOV_A11.fsa",
+  "DANI_NOV_A12.fsa",
+  "DANI_NOV_G11.fsa",
+  "DANI_NOV_H12.fsa",
+];
+
 export function App() {
   const [files, setFiles] = useState<LoadedFile[]>([]);
   const [selectedChannel, setSelectedChannel] = useState(1);
@@ -61,6 +68,19 @@ export function App() {
     },
     [],
   );
+
+  const handleLoadExamples = useCallback(async () => {
+    const results: { name: string; buffer: ArrayBuffer }[] = [];
+    for (const name of EXAMPLE_FILES) {
+      const response = await fetch(`/examples/${name}`);
+      if (response.ok) {
+        results.push({ name, buffer: await response.arrayBuffer() });
+      }
+    }
+    if (results.length > 0) {
+      handleFilesLoaded(results);
+    }
+  }, [handleFilesLoaded]);
 
   const handleAutoAlign = useCallback(() => {
     if (files.length < 2 || standardChannel <= 0) return;
@@ -115,7 +135,12 @@ export function App() {
       </header>
 
       {files.length === 0 ? (
-        <FileUpload onFilesLoaded={handleFilesLoaded} />
+        <div className="empty-state">
+          <FileUpload onFilesLoaded={handleFilesLoaded} />
+          <button type="button" className="load-examples-btn" onClick={handleLoadExamples}>
+            Load example files
+          </button>
+        </div>
       ) : (
         <>
           <FileUpload onFilesLoaded={handleFilesLoaded} />
