@@ -23,6 +23,7 @@ export function App() {
   const [selectedChannel, setSelectedChannel] = useState(1);
   const [standardChannel, setStandardChannel] = useState(0);
   const [viewports, setViewports] = useState<Map<string, ViewportState>>(new Map());
+  const [panLocked, setPanLocked] = useState(false);
 
   const handleFilesLoaded = useCallback(
     (newFiles: { name: string; buffer: ArrayBuffer }[]) => {
@@ -48,13 +49,30 @@ export function App() {
     [standardChannel],
   );
 
-  const handleViewportChange = useCallback((fileName: string, xCenter: number, xZoom: number) => {
-    setViewports((prev) => {
-      const next = new Map(prev);
-      next.set(fileName, { xCenter, xZoom });
-      return next;
-    });
-  }, []);
+  const handleViewportChange = useCallback(
+    (fileName: string, xCenter: number, xZoom: number) => {
+      setViewports((prev) => {
+        const next = new Map(prev);
+        const old = prev.get(fileName);
+
+        if (panLocked && old) {
+          const delta = xCenter - old.xCenter;
+          for (const [name, vp] of next) {
+            if (name === fileName) {
+              next.set(name, { xCenter, xZoom });
+            } else {
+              next.set(name, { ...vp, xCenter: vp.xCenter + delta });
+            }
+          }
+        } else {
+          next.set(fileName, { xCenter, xZoom });
+        }
+
+        return next;
+      });
+    },
+    [panLocked],
+  );
 
   const handleAutoAlign = useCallback(() => {
     if (files.length < 2 || standardChannel <= 0) return;
@@ -125,6 +143,14 @@ export function App() {
                   &minus;
                 </button>
               </div>
+              <label className="toolbar-checkbox">
+                <input
+                  type="checkbox"
+                  checked={panLocked}
+                  onChange={(e) => setPanLocked(e.target.checked)}
+                />
+                Lock pan
+              </label>
               {files.length >= 2 && standardChannel > 0 && (
                 <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
                   Auto-align
