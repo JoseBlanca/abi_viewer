@@ -112,13 +112,6 @@ export function App() {
     <div className="app">
       <header className="app-header">
         <h1>ABI Viewer</h1>
-        <ChannelSelector
-          dyeNames={dyeNames}
-          selectedChannel={selectedChannel}
-          onChannelChange={setSelectedChannel}
-          standardChannel={standardChannel}
-          onStandardChange={setStandardChannel}
-        />
       </header>
 
       {files.length === 0 ? (
@@ -126,23 +119,28 @@ export function App() {
       ) : (
         <>
           <FileUpload onFilesLoaded={handleFilesLoaded} />
-          {files.length > 0 && (
-            <div className="toolbar">
-              <label className="toolbar-checkbox">
-                <input
-                  type="checkbox"
-                  checked={widgetsLocked}
-                  onChange={(e) => setWidgetsLocked(e.target.checked)}
-                />
-                Lock widgets
-              </label>
-              {files.length >= 2 && standardChannel > 0 && (
-                <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
-                  Auto-align
-                </button>
-              )}
-            </div>
-          )}
+          <div className="toolbar">
+            <ChannelSelector
+              dyeNames={dyeNames}
+              selectedChannel={selectedChannel}
+              onChannelChange={setSelectedChannel}
+              standardChannel={standardChannel}
+              onStandardChange={setStandardChannel}
+            />
+            <label className="toolbar-checkbox">
+              <input
+                type="checkbox"
+                checked={widgetsLocked}
+                onChange={(e) => setWidgetsLocked(e.target.checked)}
+              />
+              Lock widgets
+            </label>
+            {files.length >= 2 && standardChannel > 0 && (
+              <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
+                Auto-align
+              </button>
+            )}
+          </div>
           <div className="widget-list">
             {files.map(({ name, abif }) => {
               const channels = abif.rawChannels;
