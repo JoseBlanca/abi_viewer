@@ -1,18 +1,14 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { AbifFile } from "../abi-parser.ts";
 import { autoAlignSamples } from "../lib/align-peaks.ts";
 import { ChannelSelector } from "./ChannelSelector.tsx";
+import type { ViewportCommand, WidgetHandle } from "./ElectropherogramWidget.tsx";
 import { ElectropherogramWidget } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
 
 interface LoadedFile {
   readonly name: string;
   readonly abif: AbifFile;
-}
-
-interface ViewportState {
-  xCenter: number;
-  xZoom: number;
 }
 
 const ZOOM_STEP = 1.3;
@@ -22,8 +18,13 @@ export function App() {
   const [files, setFiles] = useState<LoadedFile[]>([]);
   const [selectedChannel, setSelectedChannel] = useState(1);
   const [standardChannel, setStandardChannel] = useState(0);
-  const [viewports, setViewports] = useState<Map<string, ViewportState>>(new Map());
   const [panLocked, setPanLocked] = useState(false);
+
+  const [viewportCommands, setViewportCommands] = useState<Map<string, ViewportCommand>>(new Map());
+  const commandVersionRef = useRef(0);
+
+  // Refs to each widget's imperative handle, keyed by file name
+  const widgetRefsMap = useRef(new Map<string, WidgetHandle>());
 
   const handleFilesLoaded = useCallback(
     (newFiles: { name: string; buffer: ArrayBuffer }[]) => {
@@ -49,29 +50,17 @@ export function App() {
     [standardChannel],
   );
 
-  const handleViewportChange = useCallback(
-    (fileName: string, xCenter: number, xZoom: number) => {
-      setViewports((prev) => {
-        const next = new Map(prev);
-        const old = prev.get(fileName);
-
-        if (panLocked && old) {
-          const delta = xCenter - old.xCenter;
-          for (const [name, vp] of next) {
-            if (name === fileName) {
-              next.set(name, { xCenter, xZoom });
-            } else {
-              next.set(name, { ...vp, xCenter: vp.xCenter + delta });
-            }
-          }
-        } else {
-          next.set(fileName, { xCenter, xZoom });
-        }
-
-        return next;
-      });
+  const sendViewportCommands = useCallback(
+    (entries: Map<string, { xCenter: number; xZoom: number }>) => {
+      commandVersionRef.current += 1;
+      const version = commandVersionRef.current;
+      const commands = new Map<string, ViewportCommand>();
+      for (const [name, vp] of entries) {
+        commands.set(name, { version, ...vp });
+      }
+      setViewportCommands(commands);
     },
-    [panLocked],
+    [],
   );
 
   const handleAutoAlign = useCallback(() => {
@@ -85,29 +74,40 @@ export function App() {
       .filter((c) => c !== null);
 
     const aligned = autoAlignSamples(channels);
-    setViewports(aligned);
-  }, [files, standardChannel]);
+    sendViewportCommands(aligned);
+  }, [files, standardChannel, sendViewportCommands]);
 
   const handleZoomAll = useCallback(
     (direction: 1 | -1) => {
-      setViewports((prev) => {
-        const next = new Map(prev);
-        for (const file of files) {
-          const vp = next.get(file.name) ?? {
-            xCenter: file.abif.rawChannels.get(1)?.length ?? 0,
-            xZoom: 1,
-          };
-          const newZoom = Math.max(
-            1,
-            Math.min(MAX_X_ZOOM, vp.xZoom * (direction === 1 ? ZOOM_STEP : 1 / ZOOM_STEP)),
-          );
-          next.set(file.name, { ...vp, xZoom: newZoom });
-        }
-        return next;
-      });
+      const entries = new Map<string, { xCenter: number; xZoom: number }>();
+      for (const file of files) {
+        const existing = viewportCommands.get(file.name);
+        const dataLen = file.abif.rawChannels.get(selectedChannel)?.length ?? 0;
+        const currentZoom = existing?.xZoom ?? 1;
+        const currentCenter = existing?.xCenter ?? dataLen / 2;
+        const newZoom = Math.max(
+          1,
+          Math.min(MAX_X_ZOOM, currentZoom * (direction === 1 ? ZOOM_STEP : 1 / ZOOM_STEP)),
+        );
+        entries.set(file.name, { xCenter: currentCenter, xZoom: newZoom });
+      }
+      sendViewportCommands(entries);
     },
-    [files],
+    [files, selectedChannel, viewportCommands, sendViewportCommands],
   );
+
+  // Lock-pan: called synchronously during drag, directly calls panBy on other widgets
+  const panLockedRef = useRef(panLocked);
+  panLockedRef.current = panLocked;
+
+  const handlePanDelta = useCallback((sourceName: string, delta: number) => {
+    if (!panLockedRef.current) return;
+    for (const [name, handle] of widgetRefsMap.current) {
+      if (name !== sourceName) {
+        handle.panBy(delta);
+      }
+    }
+  }, []);
 
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
   const channelDyeName = dyeNames[selectedChannel - 1] ?? "";
@@ -165,7 +165,6 @@ export function App() {
               if (!channelData) return null;
 
               const standardData = showStandard ? (channels.get(standardChannel) ?? null) : null;
-              const vp = viewports.get(name);
 
               const well = abif.well ?? "";
               const sampleName = abif.sampleName ?? name;
@@ -174,15 +173,20 @@ export function App() {
               return (
                 <ElectropherogramWidget
                   key={name}
-                  fileName={name}
+                  ref={(handle) => {
+                    if (handle) {
+                      widgetRefsMap.current.set(name, handle);
+                    } else {
+                      widgetRefsMap.current.delete(name);
+                    }
+                  }}
                   label={widgetLabel}
                   channelData={channelData}
                   channelDyeName={channelDyeName}
                   standardData={standardData}
                   standardDyeName={standardDyeName}
-                  xCenter={vp?.xCenter}
-                  xZoom={vp?.xZoom}
-                  onViewportChange={handleViewportChange}
+                  viewportCommand={viewportCommands.get(name)}
+                  onPanDelta={(delta) => handlePanDelta(name, delta)}
                 />
               );
             })}
