@@ -85,6 +85,13 @@ function getRawData(data: DataView, entry: DirectoryEntry): DataView {
     tmp.setInt32(0, entry.dataOffset);
     return new DataView(buf, 0, entry.dataSize);
   }
+  const dataEnd = entry.dataOffset + entry.dataSize;
+  if (dataEnd > data.byteLength) {
+    throw new Error(
+      `Malformed ABIF: data for ${entry.tagName}/${entry.tagNumber} extends past end of file` +
+        ` (need ${dataEnd} bytes, file is ${data.byteLength})`,
+    );
+  }
   return new DataView(data.buffer, data.byteOffset + entry.dataOffset, entry.dataSize);
 }
 
@@ -114,7 +121,7 @@ function decodeNumericEntry(raw: DataView, elemType: number, numElems: number): 
 
 function decodeStringEntry(raw: DataView, elemType: number): string | null {
   if (elemType === 18) {
-    const length = raw.getUint8(0);
+    const length = Math.min(raw.getUint8(0), raw.byteLength - 1);
     return decodeAscii(new Uint8Array(raw.buffer, raw.byteOffset + 1, length));
   }
   if (elemType === 19) {
@@ -181,6 +188,12 @@ export class AbifFile {
     this.entries = new Map();
 
     const root = parseDirEntry(this.data, 6);
+    const dirEnd = root.dataOffset + root.numElems * DIR_ENTRY_SIZE;
+    if (dirEnd > buffer.byteLength) {
+      throw new Error(
+        `Malformed ABIF: directory extends past end of file (need ${dirEnd} bytes, file is ${buffer.byteLength})`,
+      );
+    }
     for (let i = 0; i < root.numElems; i++) {
       const offset = root.dataOffset + i * DIR_ENTRY_SIZE;
       const entry = parseDirEntry(this.data, offset);
@@ -188,14 +201,33 @@ export class AbifFile {
     }
   }
 
+  /** Look up a directory entry by tag name and number. */
   getEntry(tagName: string, tagNumber: number): DirectoryEntry | undefined {
     return this.entries.get(entryKey(tagName, tagNumber));
   }
 
+  /** Return all directory entries in the file. */
   getAllEntries(): DirectoryEntry[] {
     return [...this.entries.values()];
   }
 
+  /**
+   * Decode and return the value for a directory entry. Throws if not found.
+   *
+   * Return type depends on the entry's element type:
+   *  - 1 (byte), 2 (char) → Uint8Array
+   *  - 3 (word)            → Uint16Array
+   *  - 4 (short)           → Int16Array
+   *  - 5 (long)            → Int32Array
+   *  - 7 (float)           → Float32Array
+   *  - 8 (double)          → Float64Array
+   *  - 10 (date)           → AbifDate
+   *  - 11 (time)           → AbifTime
+   *  - 13 (bool)           → boolean
+   *  - 18 (pString)        → string
+   *  - 19 (cString)        → string
+   *  - other               → Uint8Array (raw bytes)
+   */
   getData(tagName: string, tagNumber: number): AbifValue {
     const entry = this.entries.get(entryKey(tagName, tagNumber));
     if (entry === undefined) {
@@ -204,6 +236,7 @@ export class AbifFile {
     return decodeEntry(this.data, entry);
   }
 
+  /** Like {@link getData} but returns null instead of throwing when the entry is missing. */
   getDataOrNull(tagName: string, tagNumber: number): AbifValue | null {
     const entry = this.entries.get(entryKey(tagName, tagNumber));
     if (entry === undefined) {
@@ -221,22 +254,12 @@ export class AbifFile {
     return null;
   }
 
-  private getFirstIntOrNull(tagName: string, tagNumber: number): number | null {
+  private getFirstNumberOrNull(tagName: string, tagNumber: number): number | null {
     const value = this.getDataOrNull(tagName, tagNumber);
     if (
       value instanceof Int16Array ||
       value instanceof Int32Array ||
-      value instanceof Uint16Array
-    ) {
-      return value[0] ?? null;
-    }
-    return null;
-  }
-
-  private getFirstFloatOrNull(tagName: string, tagNumber: number): number | null {
-    const value = this.getDataOrNull(tagName, tagNumber);
-    if (
-      value instanceof Int32Array ||
+      value instanceof Uint16Array ||
       value instanceof Float32Array ||
       value instanceof Float64Array
     ) {
@@ -246,7 +269,7 @@ export class AbifFile {
   }
 
   get numDyes(): number {
-    const value = this.getData("Dye#", 1);
+    const value = this.getDataOrNull("Dye#", 1);
     if (value instanceof Int16Array) return value[0] ?? 0;
     return 0;
   }
@@ -263,14 +286,14 @@ export class AbifFile {
   get dyeWavelengths(): number[] {
     const wavelengths: number[] = [];
     for (let i = 1; i <= this.numDyes; i++) {
-      const wl = this.getFirstIntOrNull("DyeW", i);
+      const wl = this.getFirstNumberOrNull("DyeW", i);
       if (wl !== null) wavelengths.push(wl);
     }
     return wavelengths;
   }
 
   get numScans(): number | null {
-    return this.getFirstFloatOrNull("SCAN", 1);
+    return this.getFirstNumberOrNull("SCAN", 1);
   }
 
   /**
@@ -301,8 +324,9 @@ export class AbifFile {
       const tagNum = tags[i];
       if (tagNum !== undefined) {
         const value = this.getData("DATA", tagNum);
-        if (value instanceof Int16Array) {
-          channels.set(i + 1, value);
+        const arr = toInt16Array(value);
+        if (arr !== null) {
+          channels.set(i + 1, arr);
         }
       }
     }
@@ -316,8 +340,9 @@ export class AbifFile {
     for (const entry of this.entries.values()) {
       if (entry.tagName === "DATA" && !rawTagSet.has(entry.tagNumber)) {
         const value = decodeEntry(this.data, entry);
-        if (value instanceof Int16Array) {
-          channels.set(entry.tagNumber, value);
+        const arr = toInt16Array(value);
+        if (arr !== null) {
+          channels.set(entry.tagNumber, arr);
         }
       }
     }
@@ -369,11 +394,11 @@ export class AbifFile {
   }
 
   get injectionVoltage(): number | null {
-    return this.getFirstFloatOrNull("InVt", 1);
+    return this.getFirstNumberOrNull("InVt", 1);
   }
 
   get injectionTime(): number | null {
-    return this.getFirstFloatOrNull("InSc", 1);
+    return this.getFirstNumberOrNull("InSc", 1);
   }
 
   get plateType(): string | null {
@@ -385,12 +410,27 @@ export class AbifFile {
   }
 
   get lane(): number | null {
-    return this.getFirstIntOrNull("LANE", 1);
+    return this.getFirstNumberOrNull("LANE", 1);
   }
 
   get sizeStandard(): string | null {
     return this.getStringOrNull("GTyp", 1);
   }
+}
+
+// --- Helpers ---
+
+function toInt16Array(value: AbifValue): Int16Array | null {
+  if (value instanceof Int16Array) return value;
+  if (
+    value instanceof Int32Array ||
+    value instanceof Uint16Array ||
+    value instanceof Float32Array ||
+    value instanceof Float64Array
+  ) {
+    return Int16Array.from(value);
+  }
+  return null;
 }
 
 // --- Type guards ---

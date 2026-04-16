@@ -3,6 +3,14 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AbifFile } from "../src/abi-parser.ts";
 
+const HEADER_PLUS_ONE_ENTRY = 128 + 28;
+
+function writeAscii(view: DataView, offset: number, str: string): void {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
 const fixtureBuffer = readFileSync(resolve(import.meta.dirname, "fixtures/DANI_NOV_A11.fsa"));
 const buffer = fixtureBuffer.buffer.slice(
   fixtureBuffer.byteOffset,
@@ -19,6 +27,43 @@ describe("AbifFile constructor", () => {
     const view = new DataView(bad);
     view.setUint8(0, 0x58); // 'X'
     expect(() => new AbifFile(bad)).toThrow("Not an ABIF file");
+  });
+
+  it("rejects a truncated file where directory extends past end", () => {
+    // Valid ABIF header but truncated so the directory doesn't fit
+    const truncated = buffer.slice(0, 256);
+    expect(() => new AbifFile(truncated)).toThrow("Malformed ABIF: directory extends past");
+  });
+
+  it("reports malformed data when entry data extends past end of file", () => {
+    // Create a minimal valid ABIF with one directory entry pointing past the end
+    const buf = new ArrayBuffer(HEADER_PLUS_ONE_ENTRY);
+    const view = new DataView(buf);
+    // Magic
+    writeAscii(view, 0, "ABIF");
+    // Version
+    view.setUint16(4, 101);
+    // Root dir entry at offset 6: tagName="tdir", tagNumber=1, elemType=1023,
+    // elemSize=28, numElems=1, dataSize=28, dataOffset=128
+    writeAscii(view, 6, "tdir");
+    view.setInt32(10, 1); // tagNumber
+    view.setUint16(14, 1023); // elemType
+    view.setUint16(16, 28); // elemSize
+    view.setInt32(18, 1); // numElems = 1 entry
+    view.setInt32(22, 28); // dataSize
+    view.setInt32(26, 128); // dataOffset = right after header
+
+    // One directory entry at offset 128: DATA/1 with dataOffset pointing past end
+    writeAscii(view, 128, "DATA");
+    view.setInt32(132, 1); // tagNumber
+    view.setUint16(136, 4); // elemType = short
+    view.setUint16(138, 2); // elemSize
+    view.setInt32(140, 100); // numElems
+    view.setInt32(144, 200); // dataSize = 200 bytes
+    view.setInt32(148, 99999); // dataOffset = way past end
+
+    const abi = new AbifFile(buf);
+    expect(() => abi.getData("DATA", 1)).toThrow("Malformed ABIF: data for DATA/1");
   });
 
   it("parses version from the header", () => {
@@ -113,6 +158,26 @@ describe("dye information", () => {
 
   it("reads dye set name", () => {
     expect(abi.dyeSetName).toBe("G5");
+  });
+
+  it("returns 0 numDyes and empty collections when Dye# tag is absent", () => {
+    // Minimal valid ABIF with no directory entries
+    const buf = new ArrayBuffer(HEADER_PLUS_ONE_ENTRY);
+    const view = new DataView(buf);
+    writeAscii(view, 0, "ABIF");
+    view.setUint16(4, 101);
+    writeAscii(view, 6, "tdir");
+    view.setInt32(10, 1);
+    view.setUint16(14, 1023);
+    view.setUint16(16, 28);
+    view.setInt32(18, 0); // numElems = 0 entries
+    view.setInt32(22, 0);
+    view.setInt32(26, 128);
+
+    const empty = new AbifFile(buf);
+    expect(empty.numDyes).toBe(0);
+    expect(empty.dyeNames).toEqual([]);
+    expect(empty.rawChannels.size).toBe(0);
   });
 });
 
