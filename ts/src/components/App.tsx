@@ -72,7 +72,7 @@ export function App() {
   const handleLoadExamples = useCallback(async () => {
     const results: { name: string; buffer: ArrayBuffer }[] = [];
     for (const name of EXAMPLE_FILES) {
-      const response = await fetch(`/examples/${name}`);
+      const response = await fetch(`${import.meta.env.BASE_URL}examples/${name}`);
       if (response.ok) {
         results.push({ name, buffer: await response.arrayBuffer() });
       }
