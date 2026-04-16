@@ -2,7 +2,7 @@
 
 A browser-based tool for viewing and comparing Applied Biosystems fragment analysis files (.fsa, .ab1). All processing happens client-side — no data leaves your machine.
 
-**[Try it online](https://bioinfcomav.github.io/abi-viewer/)**
+**[Try it online](https://plantgenomics.es/abi_viewer/)**
 
 ## Features
 
