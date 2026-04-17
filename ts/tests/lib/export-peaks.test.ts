@@ -13,34 +13,40 @@ function loadAbif(file: string): AbifFile {
 
 describe("buildPeakCsv", () => {
   it("emits just the header when no files are given", () => {
-    const csv = buildPeakCsv([], 1, 5, GS500_LIZ);
+    const csv = buildPeakCsv([], 5, GS500_LIZ);
     const lines = csv.split("\n");
     expect(lines).toHaveLength(1);
     expect(lines[0]).toBe("sample,well,channel,scan,bp,height,prominence");
   });
 
-  it("emits one row per detected peak in the selected channel", () => {
+  it("emits rows for every non-standard channel", () => {
     const abi = loadAbif("DANI_NOV_A11.fsa");
-    const primary = abi.rawChannels.get(1);
-    expect(primary).toBeDefined();
-    if (!primary) return;
-    const expectedPeakCount = new AbifFile(
-      readFileSync(resolve(import.meta.dirname, "../fixtures/DANI_NOV_A11.fsa")).buffer.slice(0),
-    ).rawChannels.get(1)?.length;
-    expect(expectedPeakCount).toBeDefined();
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 5, GS500_LIZ);
+    const rows = csv.split("\n").slice(1);
 
-    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 1, 5, GS500_LIZ);
-    const lines = csv.split("\n");
-    expect(lines[0]).toBe("sample,well,channel,scan,bp,height,prominence");
-    // Number of data rows = number of peaks in channel 1
-    expect(lines.length - 1).toBeGreaterThan(0);
+    // The fixture has 5 dyes: 6-FAM, VIC, NED, PET, LIZ (LIZ = channel 5 = standard)
+    // So rows should include peaks from 6-FAM, VIC, NED, PET but not LIZ
+    const channels = new Set(rows.map((r) => r.split(",")[2]));
+    expect(channels.has("6-FAM")).toBe(true);
+    expect(channels.has("VIC")).toBe(true);
+    expect(channels.has("NED")).toBe(true);
+    expect(channels.has("PET")).toBe(true);
+    expect(channels.has("LIZ")).toBe(false);
+  });
+
+  it("includes the standard channel when standardChannel is 0", () => {
+    const abi = loadAbif("DANI_NOV_A11.fsa");
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 0, GS500_LIZ);
+    const rows = csv.split("\n").slice(1);
+    const channels = new Set(rows.map((r) => r.split(",")[2]));
+    // With no standard selected, all 5 channels appear
+    expect(channels.has("LIZ")).toBe(true);
   });
 
   it("fills the bp column when calibration succeeds", () => {
     const abi = loadAbif("DANI_NOV_A11.fsa");
-    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 1, 5, GS500_LIZ);
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 5, GS500_LIZ);
     const rows = csv.split("\n").slice(1);
-    // At least some rows should have a bp value
     const withBp = rows.filter((r) => {
       const parts = r.split(",");
       return parts[4] !== "";
@@ -50,7 +56,7 @@ describe("buildPeakCsv", () => {
 
   it("leaves the bp column empty when calibration fails (C12)", () => {
     const abi = loadAbif("DANI_NOV_C12.fsa");
-    const csv = buildPeakCsv([{ fileName: "DANI_NOV_C12.fsa", abif: abi }], 1, 5, GS500_LIZ);
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_C12.fsa", abif: abi }], 5, GS500_LIZ);
     const rows = csv.split("\n").slice(1);
     for (const row of rows) {
       const parts = row.split(",");
@@ -60,7 +66,7 @@ describe("buildPeakCsv", () => {
 
   it("leaves the bp column empty when no standard channel is selected", () => {
     const abi = loadAbif("DANI_NOV_A11.fsa");
-    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 1, 0, GS500_LIZ);
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 0, GS500_LIZ);
     const rows = csv.split("\n").slice(1);
     for (const row of rows) {
       const parts = row.split(",");
@@ -76,7 +82,6 @@ describe("buildPeakCsv", () => {
         { fileName: "DANI_NOV_A11.fsa", abif: a11 },
         { fileName: "DANI_NOV_A12.fsa", abif: a12 },
       ],
-      1,
       5,
       GS500_LIZ,
     );
@@ -87,17 +92,22 @@ describe("buildPeakCsv", () => {
     expect(a12Rows.length).toBeGreaterThan(0);
   });
 
-  it("escapes commas in sample or well names", () => {
-    // Build a synthetic AbifFile-like object wouldn't work easily, but we can
-    // verify the escaping logic by including a sample whose name we craft.
-    // Since AbifFile's sampleName comes from the binary, we trust csvEscape
-    // on its own and test it via a sample whose well happens to be safe —
-    // the escape logic is covered indirectly by inspecting no stray quotes.
+  it("produces ASCII output without a BOM", () => {
     const abi = loadAbif("DANI_NOV_A11.fsa");
-    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 1, 5, GS500_LIZ);
-    // No row should have an unbalanced quote
-    const rows = csv.split("\n");
-    for (const row of rows) {
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 5, GS500_LIZ);
+    // No BOM at the start
+    expect(csv.charCodeAt(0)).not.toBe(0xfeff);
+    // Header is plain ASCII
+    const firstLine = csv.split("\n")[0] ?? "";
+    for (let i = 0; i < firstLine.length; i++) {
+      expect(firstLine.charCodeAt(i)).toBeLessThan(0x80);
+    }
+  });
+
+  it("balances quotes in every row (no stray escapes)", () => {
+    const abi = loadAbif("DANI_NOV_A11.fsa");
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 5, GS500_LIZ);
+    for (const row of csv.split("\n")) {
       const quotes = (row.match(/"/g) || []).length;
       expect(quotes % 2).toBe(0);
     }

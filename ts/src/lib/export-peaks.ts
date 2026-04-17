@@ -1,9 +1,10 @@
 /**
  * Generate a CSV report of detected peaks across all samples.
  *
- * One row per detected peak in the primary (selected) channel. The size (bp)
- * column is empty when the sample has no calibration or when the peak falls
- * outside the calibrated range.
+ * One row per detected peak in every channel except the standard (the ladder
+ * peaks are the calibration input, not data of interest). The bp column is
+ * empty when the sample has no calibration or when the peak falls outside the
+ * calibrated range.
  */
 
 import type { AbifFile } from "../abi-parser.ts";
@@ -19,34 +20,34 @@ export interface ExportInput {
 const HEADER = ["sample", "well", "channel", "scan", "bp", "height", "prominence"] as const;
 
 /**
- * Build a CSV string with one row per peak in the selected channel across all
- * loaded samples. Returns just the header when no peaks are found.
+ * Build a CSV string with one row per peak across all samples and channels,
+ * excluding the standard channel. Returns just the header when no peaks found.
  */
 export function buildPeakCsv(
   files: readonly ExportInput[],
-  selectedChannel: number,
   standardChannel: number,
   ladder: SizeLadder,
 ): string {
   const rows: string[] = [HEADER.join(",")];
 
   for (const { fileName, abif } of files) {
-    const primaryData = abif.rawChannels.get(selectedChannel);
-    if (!primaryData) continue;
-
     const dyeNames = abif.dyeNames;
-    const primary = new Electropherogram({
-      data: primaryData,
-      dyeName: dyeNames[selectedChannel - 1] ?? "",
-      sampleName: abif.sampleName ?? fileName,
-      well: abif.well ?? "",
-      fileName,
-    });
-
     const calibration = buildCalibration(abif, standardChannel, ladder, dyeNames, fileName);
 
-    for (const peak of primary.peaks) {
-      rows.push(peakRow(primary, peak, calibration));
+    for (const [channelNumber, data] of abif.rawChannels) {
+      if (channelNumber === standardChannel) continue;
+
+      const ep = new Electropherogram({
+        data,
+        dyeName: dyeNames[channelNumber - 1] ?? "",
+        sampleName: abif.sampleName ?? fileName,
+        well: abif.well ?? "",
+        fileName,
+      });
+
+      for (const peak of ep.peaks) {
+        rows.push(peakRow(ep, peak, calibration));
+      }
     }
   }
 
@@ -98,10 +99,16 @@ function csvEscape(value: string): string {
   return value;
 }
 
-/** Trigger a browser download of the given text content as a file. */
+/**
+ * Trigger a browser download of the given text content as a file.
+ *
+ * No UTF-8 BOM is added — sample/well/dye names in ABIF files are ASCII in
+ * practice, and a BOM renders as garbage bytes when the file is opened in
+ * non-UTF-8 encodings (e.g., Latin-1). If Unicode content appears later we
+ * can revisit.
+ */
 export function downloadTextFile(content: string, filename: string, mimeType: string): void {
-  // Prepend a UTF-8 BOM so Excel opens CSVs with the correct encoding
-  const blob = new Blob([`\uFEFF${content}`], { type: `${mimeType};charset=utf-8` });
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

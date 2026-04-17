@@ -99,13 +99,11 @@ export function App() {
   const handleDownloadResults = useCallback(() => {
     const csv = buildPeakCsv(
       files.map(({ name, abif }) => ({ fileName: name, abif })),
-      selectedChannel,
       standardChannel,
       ladder,
     );
-    const channelName = files[0]?.abif.dyeNames[selectedChannel - 1] ?? `ch${selectedChannel}`;
-    downloadTextFile(csv, `peaks_${channelName}.csv`, "text/csv");
-  }, [files, selectedChannel, standardChannel, ladder]);
+    downloadTextFile(csv, "peaks.csv", "text/csv");
+  }, [files, standardChannel, ladder]);
 
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
   const showStandard = standardChannel > 0 && standardChannel !== selectedChannel;
