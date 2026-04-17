@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { AbifFile } from "../abi-parser.ts";
 import type { SizeLadder } from "../domain/size-ladder.ts";
 import { DEFAULT_LADDER, LADDERS } from "../domain/size-ladder.ts";
+import { buildPeakCsv, downloadTextFile } from "../lib/export-peaks.ts";
 import { ChannelSelector } from "./ChannelSelector.tsx";
 import type { WidgetChangeEvent, WidgetHandle } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
@@ -95,6 +96,17 @@ export function App() {
     }
   }, []);
 
+  const handleDownloadResults = useCallback(() => {
+    const csv = buildPeakCsv(
+      files.map(({ name, abif }) => ({ fileName: name, abif })),
+      selectedChannel,
+      standardChannel,
+      ladder,
+    );
+    const channelName = files[0]?.abif.dyeNames[selectedChannel - 1] ?? `ch${selectedChannel}`;
+    downloadTextFile(csv, `peaks_${channelName}.csv`, "text/csv");
+  }, [files, selectedChannel, standardChannel, ladder]);
+
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
   const showStandard = standardChannel > 0 && standardChannel !== selectedChannel;
 
@@ -162,6 +174,9 @@ export function App() {
               />
               Lock widgets
             </label>
+            <button type="button" className="download-results-btn" onClick={handleDownloadResults}>
+              Download results
+            </button>
           </div>
           <div className="widget-list">
             {files.map(({ name, abif }) => (

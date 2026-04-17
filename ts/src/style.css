@@ -95,6 +95,22 @@ body {
   border-color: #999;
 }
 
+.download-results-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid #0066ff;
+  border-radius: 4px;
+  background: #0066ff;
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.download-results-btn:hover {
+  background: #0052cc;
+}
+
 /* Channel selector */
 
 .channel-selector {
