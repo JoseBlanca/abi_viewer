@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { Electropherogram } from "../domain/electropherogram.ts";
 import type { Trace, Viewport } from "../lib/render-electropherogram.ts";
 import { PADDING, renderElectropherogram } from "../lib/render-electropherogram.ts";
 
@@ -41,25 +42,15 @@ export interface WidgetChangeEvent {
 
 interface ElectropherogramWidgetProps {
   readonly label: string;
-  readonly channelData: Int16Array;
-  readonly channelDyeName: string;
-  readonly standardData: Int16Array | null;
-  readonly standardDyeName: string;
+  readonly primary: Electropherogram;
+  readonly standard: Electropherogram | null;
   readonly viewportCommand?: ViewportCommand | undefined;
   readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
 export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramWidgetProps>(
   function ElectropherogramWidget(
-    {
-      label,
-      channelData,
-      channelDyeName,
-      standardData,
-      standardDyeName,
-      viewportCommand,
-      onWidgetChange,
-    },
+    { label, primary, standard, viewportCommand, onWidgetChange },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -68,7 +59,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
     const yScaleRef = useRef(1);
     const standardYScaleRef = useRef(1);
 
-    const dataLength = channelData.length;
+    const dataLength = primary.scanCount;
 
     const xCenterRef = useRef(dataLength / 2);
     const xZoomRef = useRef(1);
@@ -120,18 +111,18 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
 
       const traces: Trace[] = [
         {
-          data: channelData,
+          data: primary.data,
           yScale: yScaleRef.current,
-          color: dyeColor(channelDyeName),
+          color: dyeColor(primary.dyeName),
           lineWidth: 1.2,
           alpha: 1,
         },
       ];
-      if (standardData) {
+      if (standard) {
         traces.push({
-          data: standardData,
+          data: standard.data,
           yScale: standardYScaleRef.current,
-          color: dyeColor(standardDyeName),
+          color: dyeColor(standard.dyeName),
           lineWidth: 0.8,
           alpha: 0.45,
         });
@@ -144,7 +135,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
         viewport,
         label,
       });
-    }, [channelData, channelDyeName, standardData, standardDyeName, dataLength, label]);
+    }, [primary, standard, dataLength, label]);
 
     // biome-ignore lint/correctness/useExhaustiveDependencies: state vars trigger redraw; drawImmediate reads refs
     useEffect(() => {
@@ -301,8 +292,8 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
         />
         <div className="widget-controls">
           <label>
-            <span className="control-label" style={{ color: dyeColor(channelDyeName) }}>
-              Y {channelDyeName}
+            <span className="control-label" style={{ color: dyeColor(primary.dyeName) }}>
+              Y {primary.dyeName}
             </span>
             <input
               type="range"
@@ -314,10 +305,10 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
             />
             <span className="control-value">{yScale.toFixed(1)}x</span>
           </label>
-          {standardData && (
+          {standard && (
             <label>
-              <span className="control-label" style={{ color: dyeColor(standardDyeName) }}>
-                Y {standardDyeName}
+              <span className="control-label" style={{ color: dyeColor(standard.dyeName) }}>
+                Y {standard.dyeName}
               </span>
               <input
                 type="range"

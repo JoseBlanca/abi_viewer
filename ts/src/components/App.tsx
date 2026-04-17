@@ -7,8 +7,8 @@ import type {
   WidgetChangeEvent,
   WidgetHandle,
 } from "./ElectropherogramWidget.tsx";
-import { ElectropherogramWidget } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
+import { SampleWidget } from "./SampleWidget.tsx";
 
 interface LoadedFile {
   readonly name: string;
@@ -124,8 +124,6 @@ export function App() {
   }, []);
 
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
-  const channelDyeName = dyeNames[selectedChannel - 1] ?? "";
-  const standardDyeName = dyeNames[standardChannel - 1] ?? "";
   const showStandard = standardChannel > 0 && standardChannel !== selectedChannel;
 
   return (
@@ -167,37 +165,24 @@ export function App() {
             )}
           </div>
           <div className="widget-list">
-            {files.map(({ name, abif }) => {
-              const channels = abif.rawChannels;
-              const channelData = channels.get(selectedChannel);
-              if (!channelData) return null;
-
-              const standardData = showStandard ? (channels.get(standardChannel) ?? null) : null;
-
-              const well = abif.well ?? "";
-              const sampleName = abif.sampleName ?? name;
-              const widgetLabel = well ? `${well} — ${sampleName}` : sampleName;
-
-              return (
-                <ElectropherogramWidget
-                  key={name}
-                  ref={(handle) => {
-                    if (handle) {
-                      widgetRefsMap.current.set(name, handle);
-                    } else {
-                      widgetRefsMap.current.delete(name);
-                    }
-                  }}
-                  label={widgetLabel}
-                  channelData={channelData}
-                  channelDyeName={channelDyeName}
-                  standardData={standardData}
-                  standardDyeName={standardDyeName}
-                  viewportCommand={viewportCommands.get(name)}
-                  onWidgetChange={(event) => handleWidgetChange(name, event)}
-                />
-              );
-            })}
+            {files.map(({ name, abif }) => (
+              <SampleWidget
+                key={name}
+                ref={(handle) => {
+                  if (handle) {
+                    widgetRefsMap.current.set(name, handle);
+                  } else {
+                    widgetRefsMap.current.delete(name);
+                  }
+                }}
+                fileName={name}
+                abif={abif}
+                selectedChannel={selectedChannel}
+                standardChannel={showStandard ? standardChannel : 0}
+                viewportCommand={viewportCommands.get(name)}
+                onWidgetChange={(event) => handleWidgetChange(name, event)}
+              />
+            ))}
           </div>
         </>
       )}
