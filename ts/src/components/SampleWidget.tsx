@@ -1,6 +1,9 @@
 import { forwardRef, useMemo } from "react";
 import type { AbifFile } from "../abi-parser.ts";
 import { Electropherogram } from "../domain/electropherogram.ts";
+import { SizeCalibration } from "../domain/size-calibration.ts";
+import type { SizeLadder } from "../domain/size-ladder.ts";
+import type { XAxisMode } from "./App.tsx";
 import type {
   ViewportCommand,
   WidgetChangeEvent,
@@ -13,17 +16,30 @@ interface SampleWidgetProps {
   readonly abif: AbifFile;
   readonly selectedChannel: number;
   readonly standardChannel: number;
+  readonly showStandardOverlay: boolean;
+  readonly ladder: SizeLadder;
+  readonly xAxisMode: XAxisMode;
   readonly viewportCommand?: ViewportCommand | undefined;
   readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
 /**
- * Constructs memoized Electropherogram instances from the AbifFile and hands
- * them to the rendering widget. Memoization keeps the class's lazy peak cache
- * alive across parent re-renders.
+ * Constructs memoized Electropherogram instances from the AbifFile, computes
+ * size calibration from the standard channel, and hands them to the rendering
+ * widget. Memoization keeps lazy caches alive across parent re-renders.
  */
 export const SampleWidget = forwardRef<WidgetHandle, SampleWidgetProps>(function SampleWidget(
-  { fileName, abif, selectedChannel, standardChannel, viewportCommand, onWidgetChange },
+  {
+    fileName,
+    abif,
+    selectedChannel,
+    standardChannel,
+    showStandardOverlay,
+    ladder,
+    xAxisMode,
+    viewportCommand,
+    onWidgetChange,
+  },
   ref,
 ) {
   const dyeNames = abif.dyeNames;
@@ -42,8 +58,10 @@ export const SampleWidget = forwardRef<WidgetHandle, SampleWidgetProps>(function
     });
   }, [abif, selectedChannel, dyeNames, sampleName, well, fileName]);
 
-  const standard = useMemo(() => {
-    if (standardChannel <= 0 || standardChannel === selectedChannel) return null;
+  // The standard channel's electropherogram — always constructed when a
+  // standard channel is selected, so we can calibrate even when not overlaying.
+  const standardEp = useMemo(() => {
+    if (standardChannel <= 0) return null;
     const data = abif.rawChannels.get(standardChannel);
     if (!data) return null;
     return new Electropherogram({
@@ -53,18 +71,26 @@ export const SampleWidget = forwardRef<WidgetHandle, SampleWidgetProps>(function
       well,
       fileName,
     });
-  }, [abif, standardChannel, selectedChannel, dyeNames, sampleName, well, fileName]);
+  }, [abif, standardChannel, dyeNames, sampleName, well, fileName]);
+
+  const calibration = useMemo(() => {
+    if (!standardEp) return null;
+    return SizeCalibration.tryBuild(standardEp, ladder);
+  }, [standardEp, ladder]);
 
   if (!primary) return null;
 
   const label = well ? `${well} — ${sampleName}` : sampleName;
+  const overlay = showStandardOverlay ? standardEp : null;
 
   return (
     <ElectropherogramWidget
       ref={ref}
       label={label}
       primary={primary}
-      standard={standard}
+      standard={overlay}
+      calibration={calibration}
+      xAxisMode={xAxisMode}
       viewportCommand={viewportCommand}
       onWidgetChange={onWidgetChange}
     />

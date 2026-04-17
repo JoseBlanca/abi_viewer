@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { AbifFile } from "../abi-parser.ts";
+import type { SizeLadder } from "../domain/size-ladder.ts";
+import { DEFAULT_LADDER, LADDERS } from "../domain/size-ladder.ts";
 import { autoAlignSamples } from "../lib/align-peaks.ts";
 import { ChannelSelector } from "./ChannelSelector.tsx";
 import type {
@@ -9,6 +11,8 @@ import type {
 } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
 import { SampleWidget } from "./SampleWidget.tsx";
+
+export type XAxisMode = "scan" | "bp";
 
 interface LoadedFile {
   readonly name: string;
@@ -27,6 +31,8 @@ export function App() {
   const [selectedChannel, setSelectedChannel] = useState(1);
   const [standardChannel, setStandardChannel] = useState(0);
   const [widgetsLocked, setWidgetsLocked] = useState(true);
+  const [ladder, setLadder] = useState<SizeLadder>(DEFAULT_LADDER);
+  const [xAxisMode, setXAxisMode] = useState<XAxisMode>("scan");
 
   const [viewportCommands, setViewportCommands] = useState<Map<string, ViewportCommand>>(new Map());
   const commandVersionRef = useRef(0);
@@ -150,6 +156,38 @@ export function App() {
               standardChannel={standardChannel}
               onStandardChange={setStandardChannel}
             />
+            {standardChannel > 0 && (
+              <>
+                <label className="toolbar-field">
+                  Ladder:{" "}
+                  <select
+                    value={
+                      Object.entries(LADDERS).find(([, l]) => l === ladder)?.[0] ?? "GS500_LIZ"
+                    }
+                    onChange={(e) => {
+                      const next = LADDERS[e.target.value];
+                      if (next) setLadder(next);
+                    }}
+                  >
+                    {Object.entries(LADDERS).map(([key, l]) => (
+                      <option key={key} value={key}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="toolbar-field">
+                  X axis:{" "}
+                  <select
+                    value={xAxisMode}
+                    onChange={(e) => setXAxisMode(e.target.value as XAxisMode)}
+                  >
+                    <option value="scan">scans</option>
+                    <option value="bp">base pairs</option>
+                  </select>
+                </label>
+              </>
+            )}
             <label className="toolbar-checkbox">
               <input
                 type="checkbox"
@@ -178,7 +216,10 @@ export function App() {
                 fileName={name}
                 abif={abif}
                 selectedChannel={selectedChannel}
-                standardChannel={showStandard ? standardChannel : 0}
+                standardChannel={standardChannel}
+                showStandardOverlay={showStandard}
+                ladder={ladder}
+                xAxisMode={xAxisMode}
                 viewportCommand={viewportCommands.get(name)}
                 onWidgetChange={(event) => handleWidgetChange(name, event)}
               />

@@ -3,6 +3,8 @@
  * No React dependency — takes a CanvasRenderingContext2D and data.
  */
 
+import type { SizeCalibration } from "../domain/size-calibration.ts";
+
 export interface Trace {
   /** Signal data (fluorescence intensity per scan). */
   readonly data: Int16Array;
@@ -31,6 +33,10 @@ export interface RenderOptions {
   readonly viewport: Viewport;
   /** Label shown in the top-left corner. */
   readonly label: string;
+  /** X-axis label mode. "bp" requires a calibration to render meaningful labels. */
+  readonly xAxisMode?: "scan" | "bp" | undefined;
+  /** Calibration used to convert scan positions to bp for axis labels. */
+  readonly calibration?: SizeCalibration | null | undefined;
 }
 
 /** Pixel padding around the plot area. */
@@ -75,50 +81,19 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
   const primaryYMin = -primaryYMax * 0.05;
 
   drawYAxis(ctx, plotLeft, plotTop, plotBottom, plotHeight, primaryYMin, primaryYMax);
-  drawXAxis(ctx, plotLeft, plotRight, plotBottom, xStart, xEnd);
+  const useBp = opts.xAxisMode === "bp" && opts.calibration != null;
+  drawXAxis(ctx, plotLeft, plotRight, plotBottom, xStart, xEnd, useBp ? opts.calibration : null);
   drawGrid(ctx, plotLeft, plotRight, plotBottom, plotHeight);
 
-  // Clip to plot area
+  // Clip to plot area and draw traces back-to-front (standard first, primary on top)
   ctx.save();
   ctx.beginPath();
   ctx.rect(plotLeft, plotTop, plotWidth, plotHeight);
   ctx.clip();
-
-  // Draw traces back-to-front (standard first, then primary on top)
   for (let t = traces.length - 1; t >= 0; t--) {
     const trace = traces[t];
-    if (!trace || trace.data.length === 0) continue;
-
-    const yMax = computeYMax(trace.data, trace.yScale);
-    const yMin = -yMax * 0.05;
-
-    // Only iterate over the visible range (plus 1 sample margin for line continuity)
-    const iStart = Math.max(0, Math.floor(xStart));
-    const iEnd = Math.min(trace.data.length, Math.ceil(xEnd) + 1);
-
-    ctx.save();
-    ctx.globalAlpha = trace.alpha;
-    ctx.strokeStyle = trace.color;
-    ctx.lineWidth = trace.lineWidth;
-    ctx.beginPath();
-
-    let first = true;
-    for (let i = iStart; i < iEnd; i++) {
-      const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
-      const value = trace.data[i] ?? 0;
-      const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
-
-      if (first) {
-        ctx.moveTo(x, y);
-        first = false;
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    ctx.stroke();
-    ctx.restore();
+    if (trace) drawTrace(ctx, trace, xStart, xEnd, plotLeft, plotBottom, plotWidth, plotHeight);
   }
-
   ctx.restore();
 
   // Label
@@ -134,6 +109,41 @@ function computeYMax(data: Int16Array, yScale: number): number {
   }
   const scaled = max / yScale;
   return Math.max(scaled, 1);
+}
+
+function drawTrace(
+  ctx: CanvasRenderingContext2D,
+  trace: Trace,
+  xStart: number,
+  xEnd: number,
+  plotLeft: number,
+  plotBottom: number,
+  plotWidth: number,
+  plotHeight: number,
+): void {
+  if (trace.data.length === 0) return;
+
+  const yMax = computeYMax(trace.data, trace.yScale);
+  const yMin = -yMax * 0.05;
+  const xRange = xEnd - xStart;
+  const iStart = Math.max(0, Math.floor(xStart));
+  const iEnd = Math.min(trace.data.length, Math.ceil(xEnd) + 1);
+
+  ctx.save();
+  ctx.globalAlpha = trace.alpha;
+  ctx.strokeStyle = trace.color;
+  ctx.lineWidth = trace.lineWidth;
+  ctx.beginPath();
+
+  for (let i = iStart; i < iEnd; i++) {
+    const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
+    const value = trace.data[i] ?? 0;
+    const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
+    if (i === iStart) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawYAxis(
@@ -175,6 +185,7 @@ function drawXAxis(
   plotBottom: number,
   xStart: number,
   xEnd: number,
+  calibration: SizeCalibration | null | undefined,
 ): void {
   ctx.strokeStyle = AXIS_COLOR;
   ctx.lineWidth = 1;
@@ -194,10 +205,18 @@ function drawXAxis(
   for (let i = 0; i <= tickCount; i++) {
     const scanIdx = Math.round(xStart + (xRange * i) / tickCount);
     const x = plotLeft + (i / tickCount) * plotWidth;
-    ctx.fillText(scanIdx.toString(), x, plotBottom + 4);
+    const label = formatXTick(scanIdx, calibration);
+    ctx.fillText(label, x, plotBottom + 4);
   }
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
+}
+
+function formatXTick(scan: number, calibration: SizeCalibration | null | undefined): string {
+  if (!calibration) return scan.toString();
+  const bp = calibration.scanToBp(scan);
+  if (bp === null) return "—";
+  return `${bp.toFixed(0)} bp`;
 }
 
 function drawGrid(

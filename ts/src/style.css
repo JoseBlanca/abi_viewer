@@ -54,6 +54,21 @@ body {
   cursor: pointer;
 }
 
+.toolbar-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: #666;
+}
+
+.toolbar-field select {
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
 .toolbar-label {
   font-size: 13px;
   color: #666;

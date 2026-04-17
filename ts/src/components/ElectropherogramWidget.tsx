@@ -1,7 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Electropherogram } from "../domain/electropherogram.ts";
+import type { SizeCalibration } from "../domain/size-calibration.ts";
 import type { Trace, Viewport } from "../lib/render-electropherogram.ts";
 import { PADDING, renderElectropherogram } from "../lib/render-electropherogram.ts";
+import type { XAxisMode } from "./App.tsx";
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 200;
@@ -18,6 +20,13 @@ const DYE_COLORS: Record<string, string> = {
 
 function dyeColor(dyeName: string): string {
   return DYE_COLORS[dyeName] ?? "#333";
+}
+
+function buildLabel(base: string, mode: XAxisMode, calibration: SizeCalibration | null): string {
+  if (mode === "bp") {
+    return calibration ? `${base}  ✓ calibrated` : `${base}  ✗ no calibration`;
+  }
+  return calibration ? `${base}  ✓ calibrated` : base;
 }
 
 export interface ViewportCommand {
@@ -44,13 +53,15 @@ interface ElectropherogramWidgetProps {
   readonly label: string;
   readonly primary: Electropherogram;
   readonly standard: Electropherogram | null;
+  readonly calibration: SizeCalibration | null;
+  readonly xAxisMode: XAxisMode;
   readonly viewportCommand?: ViewportCommand | undefined;
   readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
 export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramWidgetProps>(
   function ElectropherogramWidget(
-    { label, primary, standard, viewportCommand, onWidgetChange },
+    { label, primary, standard, calibration, xAxisMode, viewportCommand, onWidgetChange },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -128,14 +139,17 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
         });
       }
 
+      const fullLabel = buildLabel(label, xAxisMode, calibration);
       renderElectropherogram(ctx, {
         traces,
         width: CANVAS_WIDTH,
         height: CANVAS_HEIGHT,
         viewport,
-        label,
+        label: fullLabel,
+        xAxisMode,
+        calibration,
       });
-    }, [primary, standard, dataLength, label]);
+    }, [primary, standard, dataLength, label, xAxisMode, calibration]);
 
     // biome-ignore lint/correctness/useExhaustiveDependencies: state vars trigger redraw; drawImmediate reads refs
     useEffect(() => {
