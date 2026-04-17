@@ -1,6 +1,13 @@
 /**
  * Pure canvas rendering functions for electropherogram traces.
  * No React dependency — takes a CanvasRenderingContext2D and data.
+ *
+ * Supports two X-axis modes:
+ * - "scan": viewport and positioning are in scan index units (raw sample time)
+ * - "bp":   viewport and positioning are in base pair units. Each trace must
+ *           carry a SizeCalibration; the renderer converts each scan index to
+ *           its bp position at draw time. This makes different samples align
+ *           by molecular weight regardless of their individual run timing.
  */
 
 import type { SizeCalibration } from "../domain/size-calibration.ts";
@@ -16,27 +23,29 @@ export interface Trace {
   readonly lineWidth: number;
   /** Global alpha (opacity, 0-1). */
   readonly alpha: number;
+  /** Calibration used to position scans on the x-axis in bp mode. */
+  readonly calibration?: SizeCalibration | null | undefined;
 }
 
 export interface Viewport {
-  /** First visible scan index. */
+  /** First visible x value (scans or bp depending on mode). */
   readonly xStart: number;
-  /** Last visible scan index (exclusive). */
+  /** Last visible x value (scans or bp). */
   readonly xEnd: number;
 }
+
+export type XAxisMode = "scan" | "bp";
 
 export interface RenderOptions {
   readonly traces: readonly Trace[];
   readonly width: number;
   readonly height: number;
-  /** Visible scan range. */
+  /** Visible range in the current mode's units. */
   readonly viewport: Viewport;
   /** Label shown in the top-left corner. */
   readonly label: string;
-  /** X-axis label mode. "bp" requires a calibration to render meaningful labels. */
-  readonly xAxisMode?: "scan" | "bp" | undefined;
-  /** Calibration used to convert scan positions to bp for axis labels. */
-  readonly calibration?: SizeCalibration | null | undefined;
+  /** X-axis mode. Defaults to "scan". */
+  readonly xAxisMode?: XAxisMode | undefined;
 }
 
 /** Pixel padding around the plot area. */
@@ -50,6 +59,7 @@ const GRID_COLOR = "#eee";
 
 export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: RenderOptions): void {
   const { traces, width, height, viewport, label } = opts;
+  const mode: XAxisMode = opts.xAxisMode ?? "scan";
   const { xStart, xEnd } = viewport;
 
   const plotLeft = PADDING.left;
@@ -59,7 +69,6 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
   const plotWidth = plotRight - plotLeft;
   const plotHeight = plotBottom - plotTop;
 
-  // Clear
   ctx.fillStyle = BACKGROUND;
   ctx.fillRect(0, 0, width, height);
 
@@ -76,27 +85,24 @@ export function renderElectropherogram(ctx: CanvasRenderingContext2D, opts: Rend
   const xRange = xEnd - xStart;
   if (xRange <= 0) return;
 
-  // Y axis uses primary trace scale
   const primaryYMax = computeYMax(primaryTrace.data, primaryTrace.yScale);
   const primaryYMin = -primaryYMax * 0.05;
 
   drawYAxis(ctx, plotLeft, plotTop, plotBottom, plotHeight, primaryYMin, primaryYMax);
-  const useBp = opts.xAxisMode === "bp" && opts.calibration != null;
-  drawXAxis(ctx, plotLeft, plotRight, plotBottom, xStart, xEnd, useBp ? opts.calibration : null);
+  drawXAxis(ctx, plotLeft, plotRight, plotBottom, xStart, xEnd, mode);
   drawGrid(ctx, plotLeft, plotRight, plotBottom, plotHeight);
 
-  // Clip to plot area and draw traces back-to-front (standard first, primary on top)
   ctx.save();
   ctx.beginPath();
   ctx.rect(plotLeft, plotTop, plotWidth, plotHeight);
   ctx.clip();
   for (let t = traces.length - 1; t >= 0; t--) {
     const trace = traces[t];
-    if (trace) drawTrace(ctx, trace, xStart, xEnd, plotLeft, plotBottom, plotWidth, plotHeight);
+    if (trace)
+      drawTrace(ctx, trace, xStart, xEnd, mode, plotLeft, plotBottom, plotWidth, plotHeight);
   }
   ctx.restore();
 
-  // Label
   ctx.fillStyle = "#333";
   ctx.font = LABEL_FONT;
   ctx.fillText(label, plotLeft + 4, plotTop - 6);
@@ -116,18 +122,18 @@ function drawTrace(
   trace: Trace,
   xStart: number,
   xEnd: number,
+  mode: XAxisMode,
   plotLeft: number,
   plotBottom: number,
   plotWidth: number,
   plotHeight: number,
 ): void {
   if (trace.data.length === 0) return;
+  if (mode === "bp" && !trace.calibration) return;
 
   const yMax = computeYMax(trace.data, trace.yScale);
   const yMin = -yMax * 0.05;
   const xRange = xEnd - xStart;
-  const iStart = Math.max(0, Math.floor(xStart));
-  const iEnd = Math.min(trace.data.length, Math.ceil(xEnd) + 1);
 
   ctx.save();
   ctx.globalAlpha = trace.alpha;
@@ -135,6 +141,56 @@ function drawTrace(
   ctx.lineWidth = trace.lineWidth;
   ctx.beginPath();
 
+  if (mode === "scan") {
+    drawScanTrace(
+      ctx,
+      trace,
+      xStart,
+      xEnd,
+      xRange,
+      yMin,
+      yMax,
+      plotLeft,
+      plotBottom,
+      plotWidth,
+      plotHeight,
+    );
+  } else if (trace.calibration) {
+    drawBpTrace(
+      ctx,
+      trace,
+      trace.calibration,
+      xStart,
+      xEnd,
+      xRange,
+      yMin,
+      yMax,
+      plotLeft,
+      plotBottom,
+      plotWidth,
+      plotHeight,
+    );
+  }
+
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawScanTrace(
+  ctx: CanvasRenderingContext2D,
+  trace: Trace,
+  xStart: number,
+  xEnd: number,
+  xRange: number,
+  yMin: number,
+  yMax: number,
+  plotLeft: number,
+  plotBottom: number,
+  plotWidth: number,
+  plotHeight: number,
+): void {
+  const iStart = Math.max(0, Math.floor(xStart));
+  const iEnd = Math.min(trace.data.length, Math.ceil(xEnd) + 1);
   for (let i = iStart; i < iEnd; i++) {
     const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
     const value = trace.data[i] ?? 0;
@@ -142,8 +198,45 @@ function drawTrace(
     if (i === iStart) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
-  ctx.stroke();
-  ctx.restore();
+}
+
+function drawBpTrace(
+  ctx: CanvasRenderingContext2D,
+  trace: Trace,
+  calibration: SizeCalibration,
+  xStart: number,
+  xEnd: number,
+  xRange: number,
+  yMin: number,
+  yMax: number,
+  plotLeft: number,
+  plotBottom: number,
+  plotWidth: number,
+  plotHeight: number,
+): void {
+  // Find the scan range corresponding to the visible bp range. Clamp to the
+  // calibrated range: scans outside [minScan, maxScan] can't be mapped.
+  const scanLoRaw = calibration.bpToScan(Math.max(xStart, calibration.minBp));
+  const scanHiRaw = calibration.bpToScan(Math.min(xEnd, calibration.maxBp));
+  if (scanLoRaw === null || scanHiRaw === null) return;
+
+  const iStart = Math.max(0, Math.floor(scanLoRaw));
+  const iEnd = Math.min(trace.data.length, Math.ceil(scanHiRaw) + 1);
+
+  let started = false;
+  for (let i = iStart; i < iEnd; i++) {
+    const bp = calibration.scanToBp(i);
+    if (bp === null) continue;
+    const x = plotLeft + ((bp - xStart) / xRange) * plotWidth;
+    const value = trace.data[i] ?? 0;
+    const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
 }
 
 function drawYAxis(
@@ -185,7 +278,7 @@ function drawXAxis(
   plotBottom: number,
   xStart: number,
   xEnd: number,
-  calibration: SizeCalibration | null | undefined,
+  mode: XAxisMode,
 ): void {
   ctx.strokeStyle = AXIS_COLOR;
   ctx.lineWidth = 1;
@@ -202,21 +295,14 @@ function drawXAxis(
   const plotWidth = plotRight - plotLeft;
   const xRange = xEnd - xStart;
   const tickCount = 5;
+  const suffix = mode === "bp" ? " bp" : "";
   for (let i = 0; i <= tickCount; i++) {
-    const scanIdx = Math.round(xStart + (xRange * i) / tickCount);
+    const value = xStart + (xRange * i) / tickCount;
     const x = plotLeft + (i / tickCount) * plotWidth;
-    const label = formatXTick(scanIdx, calibration);
-    ctx.fillText(label, x, plotBottom + 4);
+    ctx.fillText(`${Math.round(value)}${suffix}`, x, plotBottom + 4);
   }
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
-}
-
-function formatXTick(scan: number, calibration: SizeCalibration | null | undefined): string {
-  if (!calibration) return scan.toString();
-  const bp = calibration.scanToBp(scan);
-  if (bp === null) return "—";
-  return `${bp.toFixed(0)} bp`;
 }
 
 function drawGrid(

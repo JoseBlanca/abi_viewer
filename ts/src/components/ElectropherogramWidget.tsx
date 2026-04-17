@@ -29,6 +29,22 @@ function buildLabel(base: string, mode: XAxisMode, calibration: SizeCalibration 
   return calibration ? `${base}  ✓ calibrated` : base;
 }
 
+/**
+ * The x-axis domain bounds for the current mode.
+ * - scan mode: [0, dataLength]
+ * - bp mode with calibration: [minBp, maxBp] of the calibration
+ * - bp mode without calibration: a fallback [0, 500] (trace won't draw anyway)
+ */
+function computeDomain(
+  mode: XAxisMode,
+  dataLength: number,
+  calibration: SizeCalibration | null,
+): { min: number; max: number } {
+  if (mode === "scan") return { min: 0, max: dataLength };
+  if (calibration) return { min: calibration.minBp, max: calibration.maxBp };
+  return { min: 0, max: 500 };
+}
+
 /** Methods exposed to the parent via ref for synchronous locked-widget operations. */
 export interface WidgetHandle {
   panBy(delta: number): void;
@@ -63,10 +79,15 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
     const standardYScaleRef = useRef(1);
 
     const dataLength = primary.scanCount;
+    const domain = computeDomain(xAxisMode, dataLength, calibration);
+    const domainCenter = (domain.min + domain.max) / 2;
+    const domainLength = domain.max - domain.min;
 
-    const xCenterRef = useRef(dataLength / 2);
+    // Viewport state. Values are in the current mode's units (scans or bp).
+    // Refs are the source of truth for drawing; state mirrors them for sliders.
+    const xCenterRef = useRef(domainCenter);
     const xZoomRef = useRef(1);
-    const [xCenterState, setXCenterState] = useState(dataLength / 2);
+    const [xCenterState, setXCenterState] = useState(domainCenter);
     const [xZoomState, setXZoomState] = useState(1);
 
     const setXCenter = useCallback((value: number) => {
@@ -89,6 +110,12 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       setStandardYScaleState(value);
     }, []);
 
+    // Reset viewport when the domain changes (data, mode, or calibration).
+    useEffect(() => {
+      setXCenter(domainCenter);
+      setXZoom(1);
+    }, [domainCenter, setXCenter, setXZoom]);
+
     // --- Imperative drawing ---
 
     const drawImmediate = useCallback(() => {
@@ -97,18 +124,18 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      const visibleScans = dataLength / xZoomRef.current;
-      const half = visibleScans / 2;
+      const visible = domainLength / xZoomRef.current;
+      const half = visible / 2;
       let start = xCenterRef.current - half;
       let end = xCenterRef.current + half;
-      if (start < 0) {
-        end -= start;
-        start = 0;
+      if (start < domain.min) {
+        end += domain.min - start;
+        start = domain.min;
       }
-      if (end > dataLength) {
-        start -= end - dataLength;
-        end = dataLength;
-        start = Math.max(0, start);
+      if (end > domain.max) {
+        start -= end - domain.max;
+        end = domain.max;
+        start = Math.max(domain.min, start);
       }
       const viewport: Viewport = { xStart: start, xEnd: end };
 
@@ -119,6 +146,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
           color: dyeColor(primary.dyeName),
           lineWidth: 1.2,
           alpha: 1,
+          calibration,
         },
       ];
       if (standard) {
@@ -128,6 +156,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
           color: dyeColor(standard.dyeName),
           lineWidth: 0.8,
           alpha: 0.45,
+          calibration,
         });
       }
 
@@ -139,20 +168,13 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
         viewport,
         label: fullLabel,
         xAxisMode,
-        calibration,
       });
-    }, [primary, standard, dataLength, label, xAxisMode, calibration]);
+    }, [primary, standard, domain.min, domain.max, domainLength, label, xAxisMode, calibration]);
 
     // biome-ignore lint/correctness/useExhaustiveDependencies: state vars trigger redraw; drawImmediate reads refs
     useEffect(() => {
       drawImmediate();
     }, [drawImmediate, xCenterState, xZoomState, yScale, standardYScale]);
-
-    // Reset viewport when the underlying data changes (different file/channel)
-    useEffect(() => {
-      setXCenter(dataLength / 2);
-      setXZoom(1);
-    }, [dataLength, setXCenter, setXZoom]);
 
     // --- Imperative handle for locked widgets ---
 
@@ -188,13 +210,13 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
     const dragRef = useRef<{ startX: number; startCenter: number } | null>(null);
     const rafRef = useRef(0);
 
-    const pixelToScan = useCallback(
+    const pixelToDomainDelta = useCallback(
       (pixelDeltaX: number): number => {
         const plotWidth = CANVAS_WIDTH - PADDING.left - PADDING.right;
-        const visibleScans = dataLength / xZoomRef.current;
-        return (pixelDeltaX / plotWidth) * visibleScans;
+        const visible = domainLength / xZoomRef.current;
+        return (pixelDeltaX / plotWidth) * visible;
       },
-      [dataLength],
+      [domainLength],
     );
 
     const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -206,17 +228,17 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       (e: React.MouseEvent<HTMLCanvasElement>) => {
         if (!dragRef.current) return;
         const dx = e.clientX - dragRef.current.startX;
-        const scanDelta = pixelToScan(dx);
-        const newCenter = dragRef.current.startCenter - scanDelta;
-        const delta = newCenter - xCenterRef.current;
+        const delta = pixelToDomainDelta(dx);
+        const newCenter = dragRef.current.startCenter - delta;
+        const stepDelta = newCenter - xCenterRef.current;
         xCenterRef.current = newCenter;
 
         cancelAnimationFrame(rafRef.current);
         rafRef.current = requestAnimationFrame(() => drawImmediate());
 
-        onWidgetChange?.({ type: "pan", value: delta });
+        onWidgetChange?.({ type: "pan", value: stepDelta });
       },
-      [pixelToScan, drawImmediate, onWidgetChange],
+      [pixelToDomainDelta, drawImmediate, onWidgetChange],
     );
 
     const handleMouseUp = useCallback(() => {
