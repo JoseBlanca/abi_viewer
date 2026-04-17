@@ -4,11 +4,7 @@ import { Electropherogram } from "../domain/electropherogram.ts";
 import { SizeCalibration } from "../domain/size-calibration.ts";
 import type { SizeLadder } from "../domain/size-ladder.ts";
 import type { XAxisMode } from "./App.tsx";
-import type {
-  ViewportCommand,
-  WidgetChangeEvent,
-  WidgetHandle,
-} from "./ElectropherogramWidget.tsx";
+import type { WidgetChangeEvent, WidgetHandle } from "./ElectropherogramWidget.tsx";
 import { ElectropherogramWidget } from "./ElectropherogramWidget.tsx";
 
 interface SampleWidgetProps {
@@ -19,7 +15,6 @@ interface SampleWidgetProps {
   readonly showStandardOverlay: boolean;
   readonly ladder: SizeLadder;
   readonly xAxisMode: XAxisMode;
-  readonly viewportCommand?: ViewportCommand | undefined;
   readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
@@ -37,7 +32,6 @@ export const SampleWidget = forwardRef<WidgetHandle, SampleWidgetProps>(function
     showStandardOverlay,
     ladder,
     xAxisMode,
-    viewportCommand,
     onWidgetChange,
   },
   ref,
@@ -91,7 +85,6 @@ export const SampleWidget = forwardRef<WidgetHandle, SampleWidgetProps>(function
       standard={overlay}
       calibration={calibration}
       xAxisMode={xAxisMode}
-      viewportCommand={viewportCommand}
       onWidgetChange={onWidgetChange}
     />
   );

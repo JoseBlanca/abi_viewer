@@ -29,13 +29,6 @@ function buildLabel(base: string, mode: XAxisMode, calibration: SizeCalibration 
   return calibration ? `${base}  ✓ calibrated` : base;
 }
 
-export interface ViewportCommand {
-  readonly version: number;
-  readonly xCenter: number;
-  /** If omitted, the current zoom is preserved. */
-  readonly xZoom?: number | undefined;
-}
-
 /** Methods exposed to the parent via ref for synchronous locked-widget operations. */
 export interface WidgetHandle {
   panBy(delta: number): void;
@@ -55,13 +48,12 @@ interface ElectropherogramWidgetProps {
   readonly standard: Electropherogram | null;
   readonly calibration: SizeCalibration | null;
   readonly xAxisMode: XAxisMode;
-  readonly viewportCommand?: ViewportCommand | undefined;
   readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
 export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramWidgetProps>(
   function ElectropherogramWidget(
-    { label, primary, standard, calibration, xAxisMode, viewportCommand, onWidgetChange },
+    { label, primary, standard, calibration, xAxisMode, onWidgetChange },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -156,19 +148,7 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
       drawImmediate();
     }, [drawImmediate, xCenterState, xZoomState, yScale, standardYScale]);
 
-    // --- Viewport commands (auto-align, global zoom) ---
-
-    const appliedVersionRef = useRef(-1);
-    useEffect(() => {
-      if (viewportCommand && viewportCommand.version !== appliedVersionRef.current) {
-        appliedVersionRef.current = viewportCommand.version;
-        setXCenter(viewportCommand.xCenter);
-        if (viewportCommand.xZoom !== undefined) {
-          setXZoom(viewportCommand.xZoom);
-        }
-      }
-    }, [viewportCommand, setXCenter, setXZoom]);
-
+    // Reset viewport when the underlying data changes (different file/channel)
     useEffect(() => {
       setXCenter(dataLength / 2);
       setXZoom(1);

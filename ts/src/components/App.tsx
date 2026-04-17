@@ -2,13 +2,8 @@ import { useCallback, useRef, useState } from "react";
 import { AbifFile } from "../abi-parser.ts";
 import type { SizeLadder } from "../domain/size-ladder.ts";
 import { DEFAULT_LADDER, LADDERS } from "../domain/size-ladder.ts";
-import { autoAlignSamples } from "../lib/align-peaks.ts";
 import { ChannelSelector } from "./ChannelSelector.tsx";
-import type {
-  ViewportCommand,
-  WidgetChangeEvent,
-  WidgetHandle,
-} from "./ElectropherogramWidget.tsx";
+import type { WidgetChangeEvent, WidgetHandle } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
 import { SampleWidget } from "./SampleWidget.tsx";
 
@@ -34,8 +29,6 @@ export function App() {
   const [ladder, setLadder] = useState<SizeLadder>(DEFAULT_LADDER);
   const [xAxisMode, setXAxisMode] = useState<XAxisMode>("scan");
 
-  const [viewportCommands, setViewportCommands] = useState<Map<string, ViewportCommand>>(new Map());
-  const commandVersionRef = useRef(0);
   const widgetRefsMap = useRef(new Map<string, WidgetHandle>());
 
   const handleFilesLoaded = useCallback(
@@ -62,19 +55,6 @@ export function App() {
     [standardChannel],
   );
 
-  const sendViewportCommands = useCallback(
-    (entries: Map<string, { xCenter: number; xZoom?: number | undefined }>) => {
-      commandVersionRef.current += 1;
-      const version = commandVersionRef.current;
-      const commands = new Map<string, ViewportCommand>();
-      for (const [name, vp] of entries) {
-        commands.set(name, { version, ...vp });
-      }
-      setViewportCommands(commands);
-    },
-    [],
-  );
-
   const handleLoadExamples = useCallback(async () => {
     const results: { name: string; buffer: ArrayBuffer }[] = [];
     for (const name of EXAMPLE_FILES) {
@@ -87,20 +67,6 @@ export function App() {
       handleFilesLoaded(results);
     }
   }, [handleFilesLoaded]);
-
-  const handleAutoAlign = useCallback(() => {
-    if (files.length < 2 || standardChannel <= 0) return;
-
-    const channels = files
-      .map(({ name, abif }) => {
-        const data = abif.rawChannels.get(standardChannel);
-        return data ? { name, data } : null;
-      })
-      .filter((c) => c !== null);
-
-    const aligned = autoAlignSamples(channels);
-    sendViewportCommands(aligned);
-  }, [files, standardChannel, sendViewportCommands]);
 
   // Locked widgets: broadcast changes from one widget to all others
   const widgetsLockedRef = useRef(widgetsLocked);
@@ -196,11 +162,6 @@ export function App() {
               />
               Lock widgets
             </label>
-            {files.length >= 2 && standardChannel > 0 && (
-              <button type="button" className="auto-align-btn" onClick={handleAutoAlign}>
-                Auto-align
-              </button>
-            )}
           </div>
           <div className="widget-list">
             {files.map(({ name, abif }) => (
@@ -220,7 +181,6 @@ export function App() {
                 showStandardOverlay={showStandard}
                 ladder={ladder}
                 xAxisMode={xAxisMode}
-                viewportCommand={viewportCommands.get(name)}
                 onWidgetChange={(event) => handleWidgetChange(name, event)}
               />
             ))}
