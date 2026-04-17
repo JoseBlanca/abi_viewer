@@ -213,41 +213,49 @@ describe("SizeCalibration.tryBuild (real data)", () => {
 // Run the matcher across all 16 example .fsa files. This locks in the current
 // matcher behavior: as the algorithm evolves, any file that gains/loses matches
 // will show up here. Update the expected numbers when the change is intended.
+//
+// Files where `expected: "fail"` have no real standard peaks (only injection
+// artifacts) and the calibration should correctly return null.
 describe("SizeCalibration on all fixture files", () => {
-  const FIXTURES = [
-    { file: "DANI_NOV_A11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_A12.fsa", minMatched: 14 },
-    { file: "DANI_NOV_B11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_B12.fsa", minMatched: 10 },
-    { file: "DANI_NOV_C11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_C12.fsa", minMatched: 5 },
-    { file: "DANI_NOV_D11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_D12.fsa", minMatched: 14 },
-    { file: "DANI_NOV_E11.fsa", minMatched: 12 },
-    { file: "DANI_NOV_E12.fsa", minMatched: 13 },
-    { file: "DANI_NOV_F11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_F12.fsa", minMatched: 11 },
-    { file: "DANI_NOV_G11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_G12.fsa", minMatched: 14 },
-    { file: "DANI_NOV_H11.fsa", minMatched: 14 },
-    { file: "DANI_NOV_H12.fsa", minMatched: 10 },
+  const FIXTURES: { file: string; expected: number | "fail" }[] = [
+    { file: "DANI_NOV_A11.fsa", expected: 12 },
+    { file: "DANI_NOV_A12.fsa", expected: 13 },
+    { file: "DANI_NOV_B11.fsa", expected: 13 },
+    { file: "DANI_NOV_B12.fsa", expected: 7 },
+    { file: "DANI_NOV_C11.fsa", expected: 12 },
+    { file: "DANI_NOV_C12.fsa", expected: "fail" },
+    { file: "DANI_NOV_D11.fsa", expected: 11 },
+    { file: "DANI_NOV_D12.fsa", expected: 13 },
+    { file: "DANI_NOV_E11.fsa", expected: 7 },
+    { file: "DANI_NOV_E12.fsa", expected: 13 },
+    { file: "DANI_NOV_F11.fsa", expected: 12 },
+    { file: "DANI_NOV_F12.fsa", expected: 10 },
+    { file: "DANI_NOV_G11.fsa", expected: 11 },
+    { file: "DANI_NOV_G12.fsa", expected: 13 },
+    { file: "DANI_NOV_H11.fsa", expected: 13 },
+    { file: "DANI_NOV_H12.fsa", expected: 6 },
   ];
 
-  for (const { file, minMatched } of FIXTURES) {
-    it(`builds a reliable calibration for ${file}`, () => {
-      verifyFixtureCalibration(file, minMatched);
+  for (const { file, expected } of FIXTURES) {
+    it(`calibration for ${file}`, () => {
+      verifyFixtureCalibration(file, expected);
     });
   }
 });
 
-function verifyFixtureCalibration(file: string, minMatched: number): void {
+function verifyFixtureCalibration(file: string, expected: number | "fail"): void {
   const ep = loadStandardElectropherogram(file);
   const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
+
+  if (expected === "fail") {
+    expect(cal).toBeNull();
+    return;
+  }
+
   expect(cal).not.toBeNull();
   if (!cal) return;
-  expect(cal.matchedPeaks.length).toBeGreaterThanOrEqual(minMatched);
+  expect(cal.matchedPeaks.length).toBeGreaterThanOrEqual(expected);
   expect(cal.isReliable).toBe(true);
-
   for (const m of cal.matchedPeaks) {
     expect(GS500_LIZ.sizes).toContain(m.bp);
   }

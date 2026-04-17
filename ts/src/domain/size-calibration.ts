@@ -8,6 +8,7 @@
  */
 
 import type { Electropherogram } from "./electropherogram.ts";
+import { findInjectionEnd } from "./injection-detection.ts";
 import { matchPeaksToLadder } from "./peak-ladder-match.ts";
 import type { SizeLadder } from "./size-ladder.ts";
 
@@ -67,14 +68,16 @@ export class SizeCalibration {
   /**
    * Build a calibration from a standard electropherogram and a ladder spec.
    *
-   * Uses anchor-based RANSAC matching (see peak-ladder-match.ts) that handles
-   * missing and extra peaks robustly.
+   * Uses signal-based injection detection to discard peaks from the initial
+   * artifact region, then anchor-based RANSAC matching on the remaining peaks
+   * (see peak-ladder-match.ts).
    *
    * @returns A SizeCalibration, or null if matching failed or too few peaks
    *          were matched.
    */
   static tryBuild(standard: Electropherogram, ladder: SizeLadder): SizeCalibration | null {
-    const peaks = standard.peaks;
+    const injectionEnd = findInjectionEnd(standard.data);
+    const peaks = standard.peaks.filter((p) => p.position >= injectionEnd);
     const matched = matchPeaksToLadder(peaks, ladder.sizes);
     if (!matched || matched.length < MIN_MATCHED_PEAKS) return null;
     return new SizeCalibration(matched, ladder);
