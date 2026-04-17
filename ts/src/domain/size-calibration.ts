@@ -8,6 +8,7 @@
  */
 
 import type { Electropherogram } from "./electropherogram.ts";
+import { matchPeaksToLadder } from "./peak-ladder-match.ts";
 import type { SizeLadder } from "./size-ladder.ts";
 
 export interface MatchedPeak {
@@ -66,27 +67,35 @@ export class SizeCalibration {
   /**
    * Build a calibration from a standard electropherogram and a ladder spec.
    *
-   * Phase 2 implementation: simple rank-order matching (trims to shorter list).
-   * Phase 3 will replace this with a robust matcher that handles missing and
-   * extra peaks.
+   * Uses anchor-based RANSAC matching (see peak-ladder-match.ts) that handles
+   * missing and extra peaks robustly.
    *
-   * @returns A SizeCalibration, or null if too few peaks were detected.
+   * @returns A SizeCalibration, or null if matching failed or too few peaks
+   *          were matched.
    */
   static tryBuild(standard: Electropherogram, ladder: SizeLadder): SizeCalibration | null {
     const peaks = standard.peaks;
-    if (peaks.length < MIN_MATCHED_PEAKS) return null;
+    const matched = matchPeaksToLadder(peaks, ladder.sizes);
+    if (!matched || matched.length < MIN_MATCHED_PEAKS) return null;
+    return new SizeCalibration(matched, ladder);
+  }
 
-    const n = Math.min(peaks.length, ladder.sizes.length);
-    const matched: MatchedPeak[] = [];
-    for (let i = 0; i < n; i++) {
-      const peak = peaks[i];
-      const bp = ladder.sizes[i];
-      if (peak === undefined || bp === undefined) continue;
-      matched.push({ scan: peak.position, bp });
+  /**
+   * Build a calibration directly from pre-matched (scan, bp) pairs, bypassing
+   * the automatic matcher. Useful for tests and for future user-corrected
+   * manual calibration.
+   *
+   * The pairs must be sorted by scan position ascending and strictly monotonic
+   * in both scan and bp. Returns null otherwise.
+   */
+  static fromMatched(matched: readonly MatchedPeak[], ladder: SizeLadder): SizeCalibration | null {
+    if (matched.length < 2) return null;
+    for (let i = 1; i < matched.length; i++) {
+      const prev = matched[i - 1];
+      const curr = matched[i];
+      if (!prev || !curr) return null;
+      if (curr.scan <= prev.scan || curr.bp <= prev.bp) return null;
     }
-
-    if (matched.length < MIN_MATCHED_PEAKS) return null;
-
     return new SizeCalibration(matched, ladder);
   }
 }

@@ -9,35 +9,12 @@ import { GS500_LIZ } from "../../src/domain/size-ladder.ts";
 // --- Synthetic tests: isolate math correctness from real-data matching ---
 
 /**
- * A test-only helper to build a calibration from known (scan, bp) pairs,
- * bypassing peak detection. This lets us verify interpolation math without
- * the peak detector or matcher getting in the way.
+ * Build a calibration directly from pre-matched (scan, bp) pairs, bypassing
+ * peak detection and matching. Used to verify interpolation math in isolation.
  */
 function buildFromPairs(pairs: { scan: number; bp: number }[]): SizeCalibration {
-  // Create a stub electropherogram whose peaks land at the requested scan
-  // positions. The stub is just large enough to contain the peaks.
-  const maxScan = Math.max(...pairs.map((p) => p.scan)) + 100;
-  const data = new Int16Array(maxScan);
-  for (const { scan } of pairs) {
-    // Triangle shape centered on scan so detectPeaks will find a local maximum
-    for (let d = -5; d <= 5; d++) {
-      if (scan + d >= 0 && scan + d < maxScan) {
-        const v = 5000 - Math.abs(d) * 500;
-        const existing = data[scan + d] ?? 0;
-        if (v > existing) data[scan + d] = v;
-      }
-    }
-  }
-  const ep = new Electropherogram({
-    data,
-    dyeName: "LIZ",
-    sampleName: "test",
-    well: "A01",
-    fileName: "test.fsa",
-  });
-  // Build ladder that matches the pair count exactly
   const ladder = { name: "test", sizes: pairs.map((p) => p.bp) };
-  const cal = SizeCalibration.tryBuild(ep, ladder);
+  const cal = SizeCalibration.fromMatched(pairs, ladder);
   if (!cal) throw new Error("Failed to build calibration in test helper");
   return cal;
 }
@@ -232,3 +209,72 @@ describe("SizeCalibration.tryBuild (real data)", () => {
     expect(SizeCalibration.tryBuild(flat, GS500_LIZ)).toBeNull();
   });
 });
+
+// Run the matcher across all 16 example .fsa files. This locks in the current
+// matcher behavior: as the algorithm evolves, any file that gains/loses matches
+// will show up here. Update the expected numbers when the change is intended.
+describe("SizeCalibration on all fixture files", () => {
+  const FIXTURES = [
+    { file: "DANI_NOV_A11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_A12.fsa", minMatched: 14 },
+    { file: "DANI_NOV_B11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_B12.fsa", minMatched: 10 },
+    { file: "DANI_NOV_C11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_C12.fsa", minMatched: 5 },
+    { file: "DANI_NOV_D11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_D12.fsa", minMatched: 14 },
+    { file: "DANI_NOV_E11.fsa", minMatched: 12 },
+    { file: "DANI_NOV_E12.fsa", minMatched: 13 },
+    { file: "DANI_NOV_F11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_F12.fsa", minMatched: 11 },
+    { file: "DANI_NOV_G11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_G12.fsa", minMatched: 14 },
+    { file: "DANI_NOV_H11.fsa", minMatched: 14 },
+    { file: "DANI_NOV_H12.fsa", minMatched: 10 },
+  ];
+
+  for (const { file, minMatched } of FIXTURES) {
+    it(`builds a reliable calibration for ${file}`, () => {
+      verifyFixtureCalibration(file, minMatched);
+    });
+  }
+});
+
+function verifyFixtureCalibration(file: string, minMatched: number): void {
+  const ep = loadStandardElectropherogram(file);
+  const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
+  expect(cal).not.toBeNull();
+  if (!cal) return;
+  expect(cal.matchedPeaks.length).toBeGreaterThanOrEqual(minMatched);
+  expect(cal.isReliable).toBe(true);
+
+  for (const m of cal.matchedPeaks) {
+    expect(GS500_LIZ.sizes).toContain(m.bp);
+  }
+  assertMonotonic(cal.matchedPeaks);
+}
+
+function loadStandardElectropherogram(file: string): Electropherogram {
+  const buf = readFileSync(resolve(import.meta.dirname, "../fixtures", file));
+  const fileBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  const fileAbi = new AbifFile(fileBuffer);
+  const data = fileAbi.rawChannels.get(5);
+  if (!data) throw new Error(`LIZ channel not found in ${file}`);
+  return new Electropherogram({
+    data,
+    dyeName: "LIZ",
+    sampleName: fileAbi.sampleName ?? "",
+    well: fileAbi.well ?? "",
+    fileName: file,
+  });
+}
+
+function assertMonotonic(matches: readonly { scan: number; bp: number }[]): void {
+  for (let i = 1; i < matches.length; i++) {
+    const prev = matches[i - 1];
+    const curr = matches[i];
+    if (!prev || !curr) continue;
+    expect(curr.scan).toBeGreaterThan(prev.scan);
+    expect(curr.bp).toBeGreaterThan(prev.bp);
+  }
+}
