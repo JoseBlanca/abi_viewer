@@ -10,9 +10,18 @@
  * and (late peak, late ladder point) as anchors. For each anchor pair, fit a
  * linear model scan(bp), predict where each ladder point lands, and find the
  * nearest detected peak. Count inliers. The best anchor pair wins.
+ *
+ * The linear model fails in two ways: it can mislabel a tight cluster (e.g.
+ * GS500's 139/150/160, where the mobility-curvature prediction error rivals the
+ * intra-cluster spacing), and it can lock onto a wrong global scale when a weak
+ * sample loses its low-bp peaks. As a final step we verify the result against
+ * the ladder's distinctive, scale-invariant landmark constellation (see
+ * ladder-landmarks.ts) and, when it disagrees, recalibrate from the widest
+ * trustworthy landmark anchor span.
  */
 
 import type { Peak } from "../lib/peak-detection.ts";
+import { findLadderLandmarks, findPeakLandmarks, matchLandmarks } from "./ladder-landmarks.ts";
 
 export interface MatchedPeak {
   readonly scan: number;
@@ -52,7 +61,84 @@ export function matchPeaksToLadder(
     if (matches.length > best.length) best = matches;
   }
 
-  return best.length >= MIN_MATCHES ? best : null;
+  if (best.length < MIN_MATCHES) return null;
+  return reconcileWithLandmarks(best, peaks, sizes);
+}
+
+/** A detected scan position counts as the same peak as an anchor within this margin. */
+const ANCHOR_SCAN_TOLERANCE = 2;
+
+/**
+ * Verify the matched result against the ladder's distinctive landmark
+ * constellation (for GS500: the 139/150/160 triplet and the 340/350 and
+ * 490/500 doublets) and recalibrate if they disagree.
+ *
+ * The constellation is located in the peaks by scale-invariant spacing, so it
+ * is trustworthy even when the linear matcher is not. If the primary match
+ * already pins every landmark peak to its expected bp, it is kept as-is.
+ * Otherwise we refit using the widest landmark pair as the anchor — which is
+ * both well-conditioned (a long baseline) and correct at its endpoints — and
+ * force every landmark in. This fixes both local cluster mislabels and the
+ * global scale errors that occur when a weak sample loses its low-bp peaks.
+ */
+function reconcileWithLandmarks(
+  primary: MatchedPeak[],
+  peaks: readonly Peak[],
+  sizes: readonly number[],
+): MatchedPeak[] {
+  const anchors = matchLandmarks(findLadderLandmarks(sizes), findPeakLandmarks(peaks));
+  if (!anchors || anchors.length < 2) return primary;
+
+  if (primaryAgreesWithAnchors(primary, anchors)) return primary;
+
+  const low = anchors[0];
+  const high = anchors[anchors.length - 1];
+  if (!low || !high || high.bp <= low.bp) return primary;
+
+  const refit = matchWithAnchor(peaks, sizes, {
+    bpLo: low.bp,
+    bpHi: high.bp,
+    scanLo: low.scan,
+    scanHi: high.scan,
+  });
+  const recalibrated = forceAnchors(refit, anchors);
+
+  return recalibrated.length >= MIN_MATCHES ? recalibrated : primary;
+}
+
+/** Whether the match already pins every landmark peak to its expected bp. */
+function primaryAgreesWithAnchors(
+  primary: readonly MatchedPeak[],
+  anchors: readonly MatchedPeak[],
+): boolean {
+  return anchors.every((anchor) =>
+    primary.some(
+      (m) => m.bp === anchor.bp && Math.abs(m.scan - anchor.scan) <= ANCHOR_SCAN_TOLERANCE,
+    ),
+  );
+}
+
+/**
+ * Merge a refit match with the trusted landmark anchors: the anchors are
+ * authoritative, so any refit point that conflicts with them (claims an anchor
+ * bp, sits on an anchor scan, or breaks the anchor ordering) is dropped. The
+ * result is strictly monotonic in both scan and bp.
+ */
+function forceAnchors(
+  refit: readonly MatchedPeak[],
+  anchors: readonly MatchedPeak[],
+): MatchedPeak[] {
+  const anchorBps = new Set(anchors.map((a) => a.bp));
+  const kept = refit.filter((m) => !anchorBps.has(m.bp) && consistentWithAnchors(m, anchors));
+  return [...kept, ...anchors].sort((a, b) => a.scan - b.scan);
+}
+
+/** Whether a match orders consistently with every anchor in both scan and bp. */
+function consistentWithAnchors(m: MatchedPeak, anchors: readonly MatchedPeak[]): boolean {
+  return anchors.every((a) => {
+    if (Math.abs(m.scan - a.scan) <= ANCHOR_SCAN_TOLERANCE) return false;
+    return m.scan < a.scan ? m.bp < a.bp : m.bp > a.bp;
+  });
 }
 
 /** Enumerate candidate anchor pairs: (early peak, early ladder) + (late peak, late ladder). */

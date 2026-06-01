@@ -153,6 +153,32 @@ describe("SizeCalibration (synthetic)", () => {
   });
 });
 
+describe("SizeCalibration quality gate (isReliable)", () => {
+  it("is reliable for a smooth, slowly-curving calibration", () => {
+    const cal = buildFromPairs([
+      { scan: 1000, bp: 100 },
+      { scan: 2050, bp: 200 },
+      { scan: 3150, bp: 300 },
+      { scan: 4300, bp: 400 },
+      { scan: 5500, bp: 500 },
+    ]);
+    expect(cal.isReliable).toBe(true);
+  });
+
+  it("is unreliable when a mislabelled node creates a slope kink", () => {
+    // The 300 bp node is placed far too late, making the 200->300 segment ~3x
+    // steeper than its neighbours — the signature of a mislabelled peak.
+    const cal = buildFromPairs([
+      { scan: 1000, bp: 100 },
+      { scan: 2050, bp: 200 },
+      { scan: 5200, bp: 300 },
+      { scan: 5500, bp: 400 },
+      { scan: 5900, bp: 500 },
+    ]);
+    expect(cal.isReliable).toBe(false);
+  });
+});
+
 // --- Real-data tests: verify behavior on a fixture .fsa file ---
 
 const fixtureBuffer = readFileSync(resolve(import.meta.dirname, "../fixtures/DANI_NOV_A11.fsa"));
@@ -210,6 +236,66 @@ describe("SizeCalibration.tryBuild (real data)", () => {
   });
 });
 
+// Regression: G11's 139/150/160 triplet was previously mislabelled by the
+// linear matcher (it called the 150 peak "139" and dropped 160), which warped
+// the calibration right in the 100-160 bp window where samples sit. The
+// landmark verify-and-recalibrate step must label all three correctly.
+describe("SizeCalibration (G11 triplet regression)", () => {
+  it("labels the 139/150/160 cluster correctly", () => {
+    const ep = loadStandardElectropherogram("DANI_NOV_G11.fsa");
+    const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
+    expect(cal).not.toBeNull();
+    if (!cal) return;
+
+    const cluster = [139, 150, 160].map((bp) => cal.matchedPeaks.find((m) => m.bp === bp));
+    // All three cluster members are present...
+    expect(cluster.every((m) => m !== undefined)).toBe(true);
+    // ...mapped to three distinct, increasing, closely-spaced peaks.
+    for (let i = 1; i < cluster.length; i++) {
+      const prev = cluster[i - 1];
+      const curr = cluster[i];
+      if (!prev || !curr) continue;
+      const gap = curr.scan - prev.scan;
+      expect(gap).toBeGreaterThan(80);
+      expect(gap).toBeLessThan(160);
+    }
+  });
+});
+
+// Regression: H12 is a weak sample whose low-bp ladder peaks (35-150) are
+// undetectable, so the linear matcher locked onto a wrong scale (it called the
+// 200 bp peak "35 bp"). The landmark constellation pins the 340/350 and 490/500
+// doublets, which fixes the scale so the calibration is correct from ~160 bp up.
+describe("SizeCalibration (H12 weak-sample regression)", () => {
+  it("recovers the correct high-end scale from the doublets", () => {
+    const ep = loadStandardElectropherogram("DANI_NOV_H12.fsa");
+    const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
+    expect(cal).not.toBeNull();
+    if (!cal) return;
+
+    // The 340/350 and 490/500 doublets must be matched (the trusted anchors).
+    for (const bp of [340, 350, 490, 500]) {
+      expect(cal.matchedPeaks.some((m) => m.bp === bp)).toBe(true);
+    }
+    // And the doublet pairs stay tight (~10 bp), confirming the scale is right:
+    // a wrong scale would spread or collapse them.
+    const scan340 = cal.bpToScan(340);
+    const scan350 = cal.bpToScan(350);
+    const scan490 = cal.bpToScan(490);
+    const scan500 = cal.bpToScan(500);
+    expect(scan340).not.toBeNull();
+    expect(scan350).not.toBeNull();
+    expect(scan490).not.toBeNull();
+    expect(scan500).not.toBeNull();
+    if (scan340 === null || scan350 === null || scan490 === null || scan500 === null) return;
+    for (const gap of [scan350 - scan340, scan500 - scan490]) {
+      expect(gap).toBeGreaterThan(80);
+      expect(gap).toBeLessThan(200);
+    }
+    expect(cal.isReliable).toBe(true);
+  });
+});
+
 // Run the matcher across all 16 example .fsa files. This locks in the current
 // matcher behavior: as the algorithm evolves, any file that gains/loses matches
 // will show up here. Update the expected numbers when the change is intended.
@@ -217,33 +303,37 @@ describe("SizeCalibration.tryBuild (real data)", () => {
 // Files where `expected: "fail"` have no real standard peaks (only injection
 // artifacts) and the calibration should correctly return null.
 describe("SizeCalibration on all fixture files", () => {
-  const FIXTURES: { file: string; expected: number | "fail" }[] = [
-    { file: "DANI_NOV_A11.fsa", expected: 12 },
-    { file: "DANI_NOV_A12.fsa", expected: 13 },
-    { file: "DANI_NOV_B11.fsa", expected: 13 },
-    { file: "DANI_NOV_B12.fsa", expected: 7 },
-    { file: "DANI_NOV_C11.fsa", expected: 12 },
+  const FIXTURES: { file: string; expected: number | "fail"; reliable?: boolean }[] = [
+    { file: "DANI_NOV_A11.fsa", expected: 14 },
+    { file: "DANI_NOV_A12.fsa", expected: 14 },
+    { file: "DANI_NOV_B11.fsa", expected: 14 },
+    { file: "DANI_NOV_B12.fsa", expected: 9 },
+    { file: "DANI_NOV_C11.fsa", expected: 14 },
     { file: "DANI_NOV_C12.fsa", expected: "fail" },
-    { file: "DANI_NOV_D11.fsa", expected: 11 },
-    { file: "DANI_NOV_D12.fsa", expected: 13 },
-    { file: "DANI_NOV_E11.fsa", expected: 7 },
-    { file: "DANI_NOV_E12.fsa", expected: 13 },
-    { file: "DANI_NOV_F11.fsa", expected: 12 },
-    { file: "DANI_NOV_F12.fsa", expected: 10 },
-    { file: "DANI_NOV_G11.fsa", expected: 11 },
-    { file: "DANI_NOV_G12.fsa", expected: 13 },
-    { file: "DANI_NOV_H11.fsa", expected: 13 },
-    { file: "DANI_NOV_H12.fsa", expected: 6 },
+    { file: "DANI_NOV_D11.fsa", expected: 14 },
+    { file: "DANI_NOV_D12.fsa", expected: 15 },
+    { file: "DANI_NOV_E11.fsa", expected: 9 },
+    { file: "DANI_NOV_E12.fsa", expected: 15 },
+    { file: "DANI_NOV_F11.fsa", expected: 13, reliable: false },
+    { file: "DANI_NOV_F12.fsa", expected: 11 },
+    { file: "DANI_NOV_G11.fsa", expected: 14 },
+    { file: "DANI_NOV_G12.fsa", expected: 15 },
+    { file: "DANI_NOV_H11.fsa", expected: 15 },
+    { file: "DANI_NOV_H12.fsa", expected: 8 },
   ];
 
-  for (const { file, expected } of FIXTURES) {
+  for (const { file, expected, reliable } of FIXTURES) {
     it(`calibration for ${file}`, () => {
-      verifyFixtureCalibration(file, expected);
+      verifyFixtureCalibration(file, expected, reliable ?? true);
     });
   }
 });
 
-function verifyFixtureCalibration(file: string, expected: number | "fail"): void {
+function verifyFixtureCalibration(
+  file: string,
+  expected: number | "fail",
+  reliable: boolean,
+): void {
   const ep = loadStandardElectropherogram(file);
   const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
 
@@ -255,7 +345,7 @@ function verifyFixtureCalibration(file: string, expected: number | "fail"): void
   expect(cal).not.toBeNull();
   if (!cal) return;
   expect(cal.matchedPeaks.length).toBeGreaterThanOrEqual(expected);
-  expect(cal.isReliable).toBe(true);
+  expect(cal.isReliable).toBe(reliable);
   for (const m of cal.matchedPeaks) {
     expect(GS500_LIZ.sizes).toContain(m.bp);
   }

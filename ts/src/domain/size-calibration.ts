@@ -18,6 +18,15 @@ export interface MatchedPeak {
 }
 
 const MIN_MATCHED_PEAKS = 5;
+/**
+ * Largest allowed ratio between adjacent calibration segments' slopes
+ * (scans per bp). A correct calibration follows a smooth mobility curve, so
+ * adjacent slopes are close; a mislabelled peak inserts a too-steep or
+ * too-shallow segment that spikes this ratio well past 1. Empirically the real
+ * fixtures sit at ~1.2 when correct and jump above 2 when a cluster is
+ * mislabelled, so 1.6 cleanly separates the two.
+ */
+const MAX_SLOPE_RATIO = 1.6;
 
 export class SizeCalibration {
   readonly matchedPeaks: readonly MatchedPeak[];
@@ -40,7 +49,8 @@ export class SizeCalibration {
     this.maxScan = last.scan;
     this.minBp = first.bp;
     this.maxBp = last.bp;
-    this.isReliable = matchedPeaks.length >= MIN_MATCHED_PEAKS;
+    this.isReliable =
+      matchedPeaks.length >= MIN_MATCHED_PEAKS && maxSlopeRatio(matchedPeaks) <= MAX_SLOPE_RATIO;
   }
 
   /** Convert a scan position to base pairs. Returns null outside the calibrated range. */
@@ -115,4 +125,31 @@ function findSegment<T>(sorted: readonly T[], value: number, key: (item: T) => n
     if (next !== undefined && value < key(next)) return i;
   }
   return Math.max(0, sorted.length - 2);
+}
+
+/**
+ * Largest ratio between consecutive calibration segments' slopes (scans per bp).
+ * Returns 1 when there are fewer than two segments. Used as a smoothness check:
+ * a value well above 1 means a segment is anomalously steep or shallow, which
+ * signals a mislabelled matched peak.
+ */
+function maxSlopeRatio(matched: readonly MatchedPeak[]): number {
+  const slopes: number[] = [];
+  for (let i = 1; i < matched.length; i++) {
+    const prev = matched[i - 1];
+    const curr = matched[i];
+    if (!prev || !curr) continue;
+    const dBp = curr.bp - prev.bp;
+    if (dBp <= 0) continue;
+    slopes.push((curr.scan - prev.scan) / dBp);
+  }
+
+  let maxRatio = 1;
+  for (let i = 1; i < slopes.length; i++) {
+    const a = slopes[i - 1];
+    const b = slopes[i];
+    if (a === undefined || b === undefined || a <= 0 || b <= 0) continue;
+    maxRatio = Math.max(maxRatio, a / b, b / a);
+  }
+  return maxRatio;
 }

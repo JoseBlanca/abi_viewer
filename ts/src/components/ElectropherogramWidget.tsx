@@ -23,6 +23,7 @@ function dyeColor(dyeName: string): string {
 }
 
 function buildLabel(base: string, mode: XAxisMode, calibration: SizeCalibration | null): string {
+  if (calibration && !calibration.isReliable) return `${base}  ⚠ calibration unreliable`;
   if (mode === "bp") {
     return calibration ? `${base}  ✓ calibrated` : `${base}  ✗ no calibration`;
   }
