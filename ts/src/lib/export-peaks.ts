@@ -2,13 +2,18 @@
  * Generate a CSV report of detected peaks across all samples.
  *
  * One row per detected peak in every channel except the standard (the ladder
- * peaks are the calibration input, not data of interest). The bp column is
- * empty when the sample has no calibration or when the peak falls outside the
- * calibrated range.
+ * peaks are the calibration input, not data of interest). Peaks are detected
+ * with the same noise-floor criterion as the rest of the app, and the
+ * start-of-run artifacts (primer residuals, dye blobs) are excluded: when the
+ * lane is calibrated, only peaks at or after the first matched standard peak are
+ * kept; otherwise signal-based injection detection provides the cutoff. The bp
+ * column is empty when the sample has no calibration or when the peak falls
+ * outside the calibrated range.
  */
 
 import type { AbifFile } from "../abi-parser.ts";
 import { Electropherogram } from "../domain/electropherogram.ts";
+import { findInjectionEnd } from "../domain/injection-detection.ts";
 import { SizeCalibration } from "../domain/size-calibration.ts";
 import type { SizeLadder } from "../domain/size-ladder.ts";
 
@@ -36,22 +41,44 @@ export function buildPeakCsv(
 
     for (const [channelNumber, data] of abif.rawChannels) {
       if (channelNumber === standardChannel) continue;
-
-      const ep = new Electropherogram({
-        data,
-        dyeName: dyeNames[channelNumber - 1] ?? "",
-        sampleName: abif.sampleName ?? fileName,
-        well: abif.well ?? "",
-        fileName,
-      });
-
-      for (const peak of ep.peaks) {
-        rows.push(peakRow(ep, peak, calibration));
-      }
+      rows.push(...channelRows(abif, channelNumber, data, calibration, fileName));
     }
   }
 
   return rows.join("\n");
+}
+
+/** CSV rows for one channel's real peaks (start-of-run artifacts excluded). */
+function channelRows(
+  abif: AbifFile,
+  channelNumber: number,
+  data: Int16Array,
+  calibration: SizeCalibration | null,
+  fileName: string,
+): string[] {
+  const ep = new Electropherogram({
+    data,
+    dyeName: abif.dyeNames[channelNumber - 1] ?? "",
+    sampleName: abif.sampleName ?? fileName,
+    well: abif.well ?? "",
+    fileName,
+  });
+
+  const startScan = artifactCutoffScan(calibration, data);
+  return ep.peaks
+    .filter((peak) => peak.position >= startScan)
+    .map((peak) => peakRow(ep, peak, calibration));
+}
+
+/**
+ * Scan position where real data begins, used to drop start-of-run artifacts.
+ * When the lane is calibrated, the first matched standard peak marks where the
+ * smallest real fragment migrates out; everything before it is injection
+ * artifact. Without a calibration, fall back to signal-based injection detection
+ * on the channel itself.
+ */
+function artifactCutoffScan(calibration: SizeCalibration | null, data: Int16Array): number {
+  return calibration ? calibration.minScan : findInjectionEnd(data);
 }
 
 function buildCalibration(

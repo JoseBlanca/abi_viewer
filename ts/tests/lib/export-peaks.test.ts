@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AbifFile } from "../../src/abi-parser.ts";
+import { Electropherogram } from "../../src/domain/electropherogram.ts";
+import { SizeCalibration } from "../../src/domain/size-calibration.ts";
 import { GS500_LIZ } from "../../src/domain/size-ladder.ts";
 import { buildPeakCsv } from "../../src/lib/export-peaks.ts";
 
@@ -9,6 +11,17 @@ function loadAbif(file: string): AbifFile {
   const buf = readFileSync(resolve(import.meta.dirname, "../fixtures", file));
   const arr = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   return new AbifFile(arr);
+}
+
+function lizCalibration(abi: AbifFile): SizeCalibration {
+  const data = abi.rawChannels.get(5);
+  if (!data) throw new Error("no LIZ channel");
+  const cal = SizeCalibration.tryBuild(
+    new Electropherogram({ data, dyeName: "LIZ", sampleName: "", well: "", fileName: "" }),
+    GS500_LIZ,
+  );
+  if (!cal) throw new Error("calibration failed");
+  return cal;
 }
 
 describe("buildPeakCsv", () => {
@@ -52,6 +65,30 @@ describe("buildPeakCsv", () => {
       return parts[4] !== "";
     });
     expect(withBp.length).toBeGreaterThan(0);
+  });
+
+  it("excludes start-of-run artifacts before the first standard peak", () => {
+    const abi = loadAbif("DANI_NOV_A11.fsa");
+    const minScan = lizCalibration(abi).minScan;
+
+    // There must be peaks before the cutoff (the artifacts we intend to drop)...
+    const sample = new Electropherogram({
+      data: abi.rawChannels.get(1) ?? new Int16Array(),
+      dyeName: "6-FAM",
+      sampleName: "",
+      well: "",
+      fileName: "",
+    });
+    expect(sample.peaks.some((p) => p.position < minScan)).toBe(true);
+
+    // ...and none of them should appear in the exported CSV.
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 5, GS500_LIZ);
+    const rows = csv.split("\n").slice(1);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const scan = Number(row.split(",")[3]);
+      expect(scan).toBeGreaterThanOrEqual(minScan);
+    }
   });
 
   it("leaves the bp column empty when calibration fails", () => {
