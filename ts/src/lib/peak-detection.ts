@@ -12,14 +12,30 @@ export interface Peak {
 }
 
 /**
+ * Minimum prominence as a multiple of the estimated noise floor. A peak must
+ * rise this many noise sigmas above the baseline to count as real.
+ */
+const DEFAULT_NOISE_FACTOR = 8;
+
+/**
  * Detect peaks in a signal using prominence filtering.
  *
+ * The prominence threshold is anchored to the signal's noise floor (a robust
+ * MAD estimate), not to the tallest peak. This keeps detection sensitive to
+ * weak real peaks regardless of how tall the injection artifact or the
+ * strongest fragment happens to be — a fraction-of-max threshold would scale
+ * with those and silently drop weak ladder peaks in low-signal samples.
+ *
  * @param data - Raw signal (fluorescence intensity per scan).
- * @param minProminenceRatio - Minimum prominence as a fraction of the max prominence found (0-1).
+ * @param noiseFactor - Minimum prominence as a multiple of the noise floor.
  * @param minDistance - Minimum distance in scans between peaks.
  * @returns Peaks sorted by scan position.
  */
-export function detectPeaks(data: Int16Array, minProminenceRatio = 0.03, minDistance = 30): Peak[] {
+export function detectPeaks(
+  data: Int16Array,
+  noiseFactor = DEFAULT_NOISE_FACTOR,
+  minDistance = 30,
+): Peak[] {
   if (data.length < 3) return [];
 
   const smoothed = smooth(data, 7);
@@ -49,9 +65,8 @@ export function detectPeaks(data: Int16Array, minProminenceRatio = 0.03, minDist
     prominence: computeProminence(smoothed, m.position),
   }));
 
-  // Filter by prominence
-  const maxProminence = Math.max(...peaks.map((p) => p.prominence));
-  const prominenceThreshold = maxProminence * minProminenceRatio;
+  // Filter by prominence relative to the noise floor.
+  const prominenceThreshold = noiseFactor * estimateNoise(data, smoothed);
   let filtered = peaks.filter((p) => p.prominence >= prominenceThreshold);
 
   // Filter by minimum distance (keep the more prominent peak)
@@ -66,6 +81,35 @@ export function detectPeaks(data: Int16Array, minProminenceRatio = 0.03, minDist
   filtered.sort((a, b) => a.position - b.position);
 
   return filtered;
+}
+
+/**
+ * Estimate the signal's noise floor as the robust standard deviation of the
+ * residual between the raw and smoothed signal. Smoothing removes the
+ * high-frequency noise, so the residual *is* that noise; using the median
+ * absolute deviation (scaled to a sigma equivalent) makes the estimate robust
+ * to peaks and to the injection artifact, which are a minority of samples.
+ */
+function estimateNoise(data: Int16Array, smoothed: Float64Array): number {
+  const residuals = new Float64Array(data.length);
+  for (let i = 0; i < data.length; i++) residuals[i] = (data[i] ?? 0) - (smoothed[i] ?? 0);
+  return 1.4826 * medianAbsoluteDeviation(residuals);
+}
+
+/** Median of |x - median(x)|. */
+function medianAbsoluteDeviation(values: Float64Array): number {
+  const med = medianOf(values);
+  const deviations = new Float64Array(values.length);
+  for (let i = 0; i < values.length; i++) deviations[i] = Math.abs((values[i] ?? 0) - med);
+  return medianOf(deviations);
+}
+
+function medianOf(values: Float64Array): number {
+  if (values.length === 0) return 0;
+  const sorted = Float64Array.from(values).sort();
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
 }
 
 /**

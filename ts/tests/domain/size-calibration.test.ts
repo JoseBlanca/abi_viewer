@@ -262,36 +262,27 @@ describe("SizeCalibration (G11 triplet regression)", () => {
   });
 });
 
-// Regression: H12 is a weak sample whose low-bp ladder peaks (35-150) are
-// undetectable, so the linear matcher locked onto a wrong scale (it called the
-// 200 bp peak "35 bp"). The landmark constellation pins the 340/350 and 490/500
-// doublets, which fixes the scale so the calibration is correct from ~160 bp up.
+// Regression: H12 is a weak sample. The old fraction-of-max prominence
+// threshold scaled with the injection artifact and clipped its low-bp ladder
+// peaks (the 139/150 peaks sat just under the cutoff), so the matcher had no
+// low anchors and locked onto a wrong scale (it called the 200 bp peak "35 bp").
+// With a noise-floor threshold those weak peaks are detected, so the full
+// 139/150/160 triplet is recovered and the calibration spans the real range.
 describe("SizeCalibration (H12 weak-sample regression)", () => {
-  it("recovers the correct high-end scale from the doublets", () => {
+  it("detects the weak low-bp peaks and calibrates the full range", () => {
     const ep = loadStandardElectropherogram("DANI_NOV_H12.fsa");
     const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
     expect(cal).not.toBeNull();
     if (!cal) return;
 
-    // The 340/350 and 490/500 doublets must be matched (the trusted anchors).
-    for (const bp of [340, 350, 490, 500]) {
+    // The full triplet plus the high-end doublets must be matched.
+    for (const bp of [139, 150, 160, 340, 350, 490, 500]) {
       expect(cal.matchedPeaks.some((m) => m.bp === bp)).toBe(true);
     }
-    // And the doublet pairs stay tight (~10 bp), confirming the scale is right:
-    // a wrong scale would spread or collapse them.
-    const scan340 = cal.bpToScan(340);
-    const scan350 = cal.bpToScan(350);
-    const scan490 = cal.bpToScan(490);
-    const scan500 = cal.bpToScan(500);
-    expect(scan340).not.toBeNull();
-    expect(scan350).not.toBeNull();
-    expect(scan490).not.toBeNull();
-    expect(scan500).not.toBeNull();
-    if (scan340 === null || scan350 === null || scan490 === null || scan500 === null) return;
-    for (const gap of [scan350 - scan340, scan500 - scan490]) {
-      expect(gap).toBeGreaterThan(80);
-      expect(gap).toBeLessThan(200);
-    }
+    // The calibrated range reaches down to the low ladder fragments (not stuck
+    // at 160+), and the calibration passes the quality gate.
+    expect(cal.minBp).toBeLessThanOrEqual(100);
+    expect(cal.maxBp).toBe(500);
     expect(cal.isReliable).toBe(true);
   });
 });
@@ -300,26 +291,28 @@ describe("SizeCalibration (H12 weak-sample regression)", () => {
 // matcher behavior: as the algorithm evolves, any file that gains/loses matches
 // will show up here. Update the expected numbers when the change is intended.
 //
-// Files where `expected: "fail"` have no real standard peaks (only injection
-// artifacts) and the calibration should correctly return null.
+// `reliable: false` marks a file whose calibration is built but flagged
+// low-quality (here F11, whose unresolved 160 bp peak leaves a slope kink). With
+// noise-floor peak detection every other fixture — including C12, once thought
+// to be artifacts-only — yields a full, reliable calibration.
 describe("SizeCalibration on all fixture files", () => {
   const FIXTURES: { file: string; expected: number | "fail"; reliable?: boolean }[] = [
     { file: "DANI_NOV_A11.fsa", expected: 14 },
     { file: "DANI_NOV_A12.fsa", expected: 14 },
     { file: "DANI_NOV_B11.fsa", expected: 14 },
-    { file: "DANI_NOV_B12.fsa", expected: 9 },
-    { file: "DANI_NOV_C11.fsa", expected: 14 },
-    { file: "DANI_NOV_C12.fsa", expected: "fail" },
-    { file: "DANI_NOV_D11.fsa", expected: 14 },
+    { file: "DANI_NOV_B12.fsa", expected: 15 },
+    { file: "DANI_NOV_C11.fsa", expected: 15 },
+    { file: "DANI_NOV_C12.fsa", expected: 15 },
+    { file: "DANI_NOV_D11.fsa", expected: 15 },
     { file: "DANI_NOV_D12.fsa", expected: 15 },
-    { file: "DANI_NOV_E11.fsa", expected: 9 },
+    { file: "DANI_NOV_E11.fsa", expected: 15 },
     { file: "DANI_NOV_E12.fsa", expected: 15 },
     { file: "DANI_NOV_F11.fsa", expected: 13, reliable: false },
-    { file: "DANI_NOV_F12.fsa", expected: 11 },
-    { file: "DANI_NOV_G11.fsa", expected: 14 },
+    { file: "DANI_NOV_F12.fsa", expected: 15 },
+    { file: "DANI_NOV_G11.fsa", expected: 15 },
     { file: "DANI_NOV_G12.fsa", expected: 15 },
     { file: "DANI_NOV_H11.fsa", expected: 15 },
-    { file: "DANI_NOV_H12.fsa", expected: 8 },
+    { file: "DANI_NOV_H12.fsa", expected: 14 },
   ];
 
   for (const { file, expected, reliable } of FIXTURES) {

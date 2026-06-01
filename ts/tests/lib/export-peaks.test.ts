@@ -54,9 +54,12 @@ describe("buildPeakCsv", () => {
     expect(withBp.length).toBeGreaterThan(0);
   });
 
-  it("leaves the bp column empty when calibration fails (C12)", () => {
-    const abi = loadAbif("DANI_NOV_C12.fsa");
-    const csv = buildPeakCsv([{ fileName: "DANI_NOV_C12.fsa", abif: abi }], 5, GS500_LIZ);
+  it("leaves the bp column empty when calibration fails", () => {
+    // A ladder with too few sizes to match (< the matcher's minimum) forces
+    // calibration to fail, so no row gets a bp value.
+    const tinyLadder = { name: "tiny", sizes: [100, 200, 300] };
+    const abi = loadAbif("DANI_NOV_A11.fsa");
+    const csv = buildPeakCsv([{ fileName: "DANI_NOV_A11.fsa", abif: abi }], 5, tinyLadder);
     const rows = csv.split("\n").slice(1);
     for (const row of rows) {
       const parts = row.split(",");

@@ -77,4 +77,24 @@ describe("detectPeaks", () => {
     const flat = new Int16Array(100).fill(50);
     expect(detectPeaks(flat)).toEqual([]);
   });
+
+  it("detects a weak peak alongside a much taller one", () => {
+    // A tall peak (8000) and a weak-but-clear peak (200), far apart. The weak
+    // peak is well below 3% of the tall one, so a fraction-of-max threshold
+    // would drop it; a noise-floor threshold keeps it.
+    const data = new Int16Array(2000);
+    const addBump = (center: number, height: number, halfWidth: number) => {
+      for (let d = -halfWidth; d <= halfWidth; d++) {
+        const v = Math.round(height * (1 - Math.abs(d) / halfWidth));
+        if (v > (data[center + d] ?? 0)) data[center + d] = v;
+      }
+    };
+    addBump(500, 8000, 20);
+    addBump(1500, 200, 20);
+
+    const peaks = detectPeaks(data);
+    const near = (pos: number) => peaks.some((p) => Math.abs(p.position - pos) <= 5);
+    expect(near(500)).toBe(true);
+    expect(near(1500)).toBe(true);
+  });
 });
