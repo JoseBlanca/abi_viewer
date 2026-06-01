@@ -1,9 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Electropherogram } from "../domain/electropherogram.ts";
 import type { SizeCalibration } from "../domain/size-calibration.ts";
+import type { Domain, XAxisMode } from "../domain/x-domain.ts";
 import type { Trace, Viewport } from "../lib/render-electropherogram.ts";
 import { PADDING, renderElectropherogram } from "../lib/render-electropherogram.ts";
-import type { XAxisMode } from "./App.tsx";
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 200;
@@ -29,22 +29,6 @@ function buildLabel(base: string, mode: XAxisMode, calibration: SizeCalibration 
   return calibration ? `${base}  ✓ calibrated` : base;
 }
 
-/**
- * The x-axis domain bounds for the current mode.
- * - scan mode: [0, dataLength]
- * - bp mode with calibration: [minBp, maxBp] of the calibration
- * - bp mode without calibration: a fallback [0, 500] (trace won't draw anyway)
- */
-function computeDomain(
-  mode: XAxisMode,
-  dataLength: number,
-  calibration: SizeCalibration | null,
-): { min: number; max: number } {
-  if (mode === "scan") return { min: 0, max: dataLength };
-  if (calibration) return { min: calibration.minBp, max: calibration.maxBp };
-  return { min: 0, max: 500 };
-}
-
 /** Methods exposed to the parent via ref for synchronous locked-widget operations. */
 export interface WidgetHandle {
   panBy(delta: number): void;
@@ -64,12 +48,14 @@ interface ElectropherogramWidgetProps {
   readonly standard: Electropherogram | null;
   readonly calibration: SizeCalibration | null;
   readonly xAxisMode: XAxisMode;
+  /** Shared x-axis domain so every panel spans the same range and stays aligned. */
+  readonly domain: Domain;
   readonly onWidgetChange?: ((event: WidgetChangeEvent) => void) | undefined;
 }
 
 export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramWidgetProps>(
   function ElectropherogramWidget(
-    { label, primary, standard, calibration, xAxisMode, onWidgetChange },
+    { label, primary, standard, calibration, xAxisMode, domain, onWidgetChange },
     ref,
   ) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -78,8 +64,6 @@ export const ElectropherogramWidget = forwardRef<WidgetHandle, ElectropherogramW
     const yScaleRef = useRef(1);
     const standardYScaleRef = useRef(1);
 
-    const dataLength = primary.scanCount;
-    const domain = computeDomain(xAxisMode, dataLength, calibration);
     const domainCenter = (domain.min + domain.max) / 2;
     const domainLength = domain.max - domain.min;
 

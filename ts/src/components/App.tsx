@@ -1,18 +1,68 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AbifFile } from "../abi-parser.ts";
+import { Electropherogram } from "../domain/electropherogram.ts";
+import { SizeCalibration } from "../domain/size-calibration.ts";
 import type { SizeLadder } from "../domain/size-ladder.ts";
 import { DEFAULT_LADDER, LADDERS } from "../domain/size-ladder.ts";
+import type { XAxisMode } from "../domain/x-domain.ts";
+import { computeSharedDomain } from "../domain/x-domain.ts";
 import { buildPeakCsv, downloadTextFile } from "../lib/export-peaks.ts";
 import { ChannelSelector } from "./ChannelSelector.tsx";
 import type { WidgetChangeEvent, WidgetHandle } from "./ElectropherogramWidget.tsx";
+import { ElectropherogramWidget } from "./ElectropherogramWidget.tsx";
 import { FileUpload } from "./FileUpload.tsx";
-import { SampleWidget } from "./SampleWidget.tsx";
 
-export type XAxisMode = "scan" | "bp";
+export type { XAxisMode } from "../domain/x-domain.ts";
 
 interface LoadedFile {
   readonly name: string;
   readonly abif: AbifFile;
+}
+
+interface SampleData {
+  readonly name: string;
+  readonly primary: Electropherogram;
+  readonly standard: Electropherogram | null;
+  readonly calibration: SizeCalibration | null;
+  readonly label: string;
+}
+
+/**
+ * Build the derived traces and calibration for one loaded file. Returns null
+ * when the selected channel has no data (nothing to render for that sample).
+ */
+function buildSample(
+  file: LoadedFile,
+  selectedChannel: number,
+  standardChannel: number,
+  ladder: SizeLadder,
+): SampleData | null {
+  const { name, abif } = file;
+  const names = abif.dyeNames;
+  const sampleName = abif.sampleName ?? name;
+  const well = abif.well ?? "";
+  const meta = { sampleName, well, fileName: name };
+
+  const primaryData = abif.rawChannels.get(selectedChannel);
+  if (!primaryData) return null;
+  const primary = new Electropherogram({
+    data: primaryData,
+    dyeName: names[selectedChannel - 1] ?? "",
+    ...meta,
+  });
+
+  const standardData = standardChannel > 0 ? abif.rawChannels.get(standardChannel) : undefined;
+  const standard = standardData
+    ? new Electropherogram({
+        data: standardData,
+        dyeName: names[standardChannel - 1] ?? "",
+        ...meta,
+      })
+    : null;
+  const calibration = standard ? SizeCalibration.tryBuild(standard, ladder) : null;
+  const label = well ? `${well} — ${sampleName}` : sampleName;
+
+  return { name, primary, standard, calibration, label };
 }
 
 const EXAMPLE_FILES = [
@@ -108,6 +158,29 @@ export function App() {
   const dyeNames = files.length > 0 && files[0] !== undefined ? files[0].abif.dyeNames : [];
   const showStandard = standardChannel > 0 && standardChannel !== selectedChannel;
 
+  // Per-sample derived data (primary trace, standard trace, calibration).
+  // Built here rather than per-widget so the panels can share a single x-axis
+  // domain and stay aligned. Memoized to keep each Electropherogram's lazy peak
+  // cache alive across re-renders (e.g. x-axis mode switches, lock toggles).
+  const samples = useMemo(
+    () =>
+      files
+        .map((file) => buildSample(file, selectedChannel, standardChannel, ladder))
+        .filter((s): s is SampleData => s !== null),
+    [files, selectedChannel, standardChannel, ladder],
+  );
+
+  // Single x-axis domain shared by every panel, so they line up by default both
+  // on load and whenever the x-axis mode changes.
+  const sharedDomain = useMemo(
+    () =>
+      computeSharedDomain(
+        xAxisMode,
+        samples.map((s) => ({ scanCount: s.primary.scanCount, calibration: s.calibration })),
+      ),
+    [xAxisMode, samples],
+  );
+
   return (
     <div className="app">
       <header className="app-header">
@@ -177,8 +250,8 @@ export function App() {
             </button>
           </div>
           <div className="widget-list">
-            {files.map(({ name, abif }) => (
-              <SampleWidget
+            {samples.map(({ name, primary, standard, calibration, label }) => (
+              <ElectropherogramWidget
                 key={name}
                 ref={(handle) => {
                   if (handle) {
@@ -187,13 +260,12 @@ export function App() {
                     widgetRefsMap.current.delete(name);
                   }
                 }}
-                fileName={name}
-                abif={abif}
-                selectedChannel={selectedChannel}
-                standardChannel={standardChannel}
-                showStandardOverlay={showStandard}
-                ladder={ladder}
+                label={label}
+                primary={primary}
+                standard={showStandard ? standard : null}
+                calibration={calibration}
                 xAxisMode={xAxisMode}
+                domain={sharedDomain}
                 onWidgetChange={(event) => handleWidgetChange(name, event)}
               />
             ))}
