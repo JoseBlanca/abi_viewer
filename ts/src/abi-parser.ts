@@ -298,17 +298,35 @@ export class AbifFile {
 
   /**
    * DATA tag numbers for raw channels, ordered by dye index.
-   * Raw channels have numElems === numScans. Typically DATA/1-4 for the
-   * first 4 dyes and DATA/105+ for additional dyes (e.g. 5-dye .fsa files).
+   *
+   * Raw channels have numElems === numScans and live at canonical ABIF tag
+   * numbers: DATA/1-4 for the first four dyes, then DATA/105, 106, 107… for the
+   * fifth dye onward.
+   *
+   * Files that have been through analysis software (GeneMapper, the sequencer's
+   * data collection, etc.) additionally carry analyzed/baseline-corrected
+   * channels at DATA/9-12 and DATA/205+ — these share the raw scan length, so a
+   * naive "lowest DATA tags matching numScans" heuristic wrongly grabs DATA/9-12
+   * ahead of DATA/105 and drops the last raw dye (e.g. the LIZ size standard).
    */
   private get rawDataTags(): number[] {
     const nScans = this.numScans;
-    if (nScans === null) {
-      return Array.from({ length: this.numDyes }, (_, i) => i + 1);
-    }
+    // Canonical raw tag for the i-th dye (0-based): 1-4, then 105, 106, 107…
+    const canonical = Array.from({ length: this.numDyes }, (_, i) => (i < 4 ? i + 1 : 101 + i));
+    if (nScans === null) return canonical;
+
+    const present = canonical.filter((tagNumber) => {
+      const entry = this.entries.get(entryKey("DATA", tagNumber));
+      return entry !== undefined && entry.numElems === nScans;
+    });
+    if (present.length === this.numDyes) return present;
+
+    // Fallback for files that deviate from the canonical layout: take raw-length
+    // DATA tags but skip the known analyzed ranges (9-12 and 205-299).
+    const isAnalyzed = (t: number): boolean => (t >= 9 && t <= 12) || (t >= 205 && t <= 299);
     const tags: number[] = [];
     for (const entry of this.entries.values()) {
-      if (entry.tagName === "DATA" && entry.numElems === nScans) {
+      if (entry.tagName === "DATA" && entry.numElems === nScans && !isAnalyzed(entry.tagNumber)) {
         tags.push(entry.tagNumber);
       }
     }

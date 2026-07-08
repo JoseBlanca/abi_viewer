@@ -252,6 +252,45 @@ describe("analyzed channel data", () => {
   });
 });
 
+describe("files with analyzed channels at DATA/9-12 (LIZ 500 regression)", () => {
+  // Files processed by the sequencer's analysis software carry baseline-corrected
+  // channels at DATA/9-12 and DATA/205 that share the raw scan length. A naive
+  // "lowest DATA tags matching numScans" heuristic grabs DATA/9-12 ahead of the
+  // real 5th raw channel (DATA/105, the LIZ size standard), so the standard never
+  // shows. Reported by users viewing LIZ 500 .fsa files processed by the service.
+  const lizFixture = readFileSync(
+    resolve(import.meta.dirname, "fixtures/LIZ500_analyzed_C4_A02.fsa"),
+  );
+  const lizBuffer = lizFixture.buffer.slice(
+    lizFixture.byteOffset,
+    lizFixture.byteOffset + lizFixture.byteLength,
+  );
+  const abi = new AbifFile(lizBuffer);
+
+  it("is a 5-dye G5 file with a LIZ channel and analyzed data present", () => {
+    expect(abi.numDyes).toBe(5);
+    expect(abi.dyeNames).toEqual(["6-FAM", "VIC", "NED", "PET", "LIZ"]);
+    // Sanity: the analyzed channels that used to shadow the raw LIZ channel exist.
+    expect(abi.getEntry("DATA", 9)?.numElems).toBe(abi.numScans);
+  });
+
+  it("maps the 5th raw channel to the LIZ trace at DATA/105, not analyzed DATA/9", () => {
+    const nScans = abi.numScans;
+    const ch5 = abi.rawChannels.get(5);
+    const liz = abi.getData("DATA", 105);
+    const analyzed9 = abi.getData("DATA", 9);
+    expect(ch5).toBeDefined();
+    expect(ch5?.length).toBe(nScans);
+    // Channel 5 must be the raw LIZ data (DATA/105), not the analyzed 6-FAM (DATA/9).
+    expect(Array.from(ch5 ?? [])).toEqual(Array.from(liz as Int16Array));
+    expect(Array.from(ch5 ?? [])).not.toEqual(Array.from(analyzed9 as Int16Array));
+  });
+
+  it("exposes exactly 5 raw channels keyed 1-5", () => {
+    expect([...abi.rawChannels.keys()]).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
 describe("getData type decoding", () => {
   const abi = new AbifFile(buffer);
 

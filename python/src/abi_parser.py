@@ -209,16 +209,39 @@ class AbifFile:
     def _raw_data_tags(self) -> list[int]:
         """DATA tag numbers for raw channels, ordered by dye index.
 
-        Raw channels have num_elems == num_scans. Typically DATA/1-4 for the
-        first 4 dyes and DATA/105+ for additional dyes (e.g. 5-dye .fsa files).
+        Raw channels have num_elems == num_scans and live at canonical ABIF tag
+        numbers: DATA/1-4 for the first four dyes, then DATA/105, 106, 107... for
+        the fifth dye onward.
+
+        Files processed by analysis software (GeneMapper, the sequencer's data
+        collection, etc.) also carry analyzed/baseline-corrected channels at
+        DATA/9-12 and DATA/205+ with the raw scan length, so a naive "lowest DATA
+        tags matching num_scans" heuristic wrongly grabs DATA/9-12 ahead of
+        DATA/105 and drops the last raw dye (e.g. the LIZ size standard).
         """
+        # Canonical raw tag for the i-th dye (0-based): 1-4, then 105, 106, 107...
+        canonical = [i + 1 if i < 4 else 101 + i for i in range(self.num_dyes)]
         n_scans = self.num_scans
         if n_scans is None:
-            return list(range(1, self.num_dyes + 1))
+            return canonical
+
+        present = [
+            t
+            for t in canonical
+            if (e := self._entries.get(("DATA", t))) is not None and e.num_elems == n_scans
+        ]
+        if len(present) == self.num_dyes:
+            return present
+
+        # Fallback for files that deviate from the canonical layout: take
+        # raw-length DATA tags but skip the known analyzed ranges (9-12, 205-299).
+        def is_analyzed(t: int) -> bool:
+            return 9 <= t <= 12 or 205 <= t <= 299
+
         raw_tags = sorted(
             e.tag_number
             for e in self._entries.values()
-            if e.tag_name == "DATA" and e.num_elems == n_scans
+            if e.tag_name == "DATA" and e.num_elems == n_scans and not is_analyzed(e.tag_number)
         )
         return raw_tags[: self.num_dyes]
 
