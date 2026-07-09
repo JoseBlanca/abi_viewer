@@ -26,15 +26,22 @@ const DEFAULT_NOISE_FACTOR = 8;
  * strongest fragment happens to be — a fraction-of-max threshold would scale
  * with those and silently drop weak ladder peaks in low-signal samples.
  *
+ * Peak height is deliberately NOT used to reject peaks: in fragment analysis the
+ * real alleles are frequently the tallest peaks in the trace. The start-of-run
+ * injection spike is excluded downstream by scan position (injection detection
+ * for calibration, the artifact cutoff for the CSV export), not here by height.
+ *
  * @param data - Raw signal (fluorescence intensity per scan).
  * @param noiseFactor - Minimum prominence as a multiple of the noise floor.
- * @param minDistance - Minimum distance in scans between peaks.
+ * @param minDistance - Minimum distance in scans between peaks. Kept small enough
+ *   to resolve alleles ~1 bp apart (~11-14 scans in typical runs); a coarser
+ *   value merges adjacent real peaks into one.
  * @returns Peaks sorted by scan position.
  */
 export function detectPeaks(
   data: Int16Array,
   noiseFactor = DEFAULT_NOISE_FACTOR,
-  minDistance = 30,
+  minDistance = 10,
 ): Peak[] {
   if (data.length < 3) return [];
 
@@ -71,11 +78,6 @@ export function detectPeaks(
 
   // Filter by minimum distance (keep the more prominent peak)
   filtered = filterByDistance(filtered, minDistance);
-
-  // Remove injection spike outliers: peaks much taller than the typical signal.
-  // In fragment analysis, the injection spike at the start is often 10x taller
-  // than the real size standard peaks.
-  filtered = removeHeightOutliers(filtered);
 
   // Sort by position
   filtered.sort((a, b) => a.position - b.position);
@@ -178,26 +180,4 @@ function filterByDistance(peaks: Peak[], minDistance: number): Peak[] {
   }
 
   return kept;
-}
-
-/**
- * Remove peaks that are height outliers (injection spikes).
- *
- * Computes the median height and removes peaks taller than 5x the median.
- * Only removes if at least 4 peaks remain after filtering.
- */
-function removeHeightOutliers(peaks: Peak[]): Peak[] {
-  if (peaks.length < 5) return peaks;
-
-  const heights = peaks.map((p) => p.height).sort((a, b) => a - b);
-  const mid = Math.floor(heights.length / 2);
-  const medianHeight = heights[mid] ?? 0;
-
-  if (medianHeight <= 0) return peaks;
-
-  const threshold = medianHeight * 5;
-  const filtered = peaks.filter((p) => p.height <= threshold);
-
-  // Only apply if we still have enough peaks
-  return filtered.length >= 4 ? filtered : peaks;
 }

@@ -98,3 +98,61 @@ describe("detectPeaks", () => {
     expect(near(1500)).toBe(true);
   });
 });
+
+// Regression: closely-spaced tall alleles used to be dropped by two separate
+// filters — a 5x-median "height outlier" removal that deleted the tallest real
+// peaks, and a 30-scan minimum distance that merged alleles ~1 bp apart.
+describe("detectPeaks — closely-spaced tall peaks (regression)", () => {
+  it("keeps a peak far taller than the median (no height-outlier removal)", () => {
+    // Many small peaks and one that is ~10x taller. The tall one is the real
+    // allele; it must not be rejected for being an outlier.
+    const data = new Int16Array(4000);
+    const addBump = (center: number, height: number, halfWidth = 8) => {
+      for (let d = -halfWidth; d <= halfWidth; d++) {
+        const v = Math.round(height * (1 - Math.abs(d) / (halfWidth + 1)));
+        if (v > (data[center + d] ?? 0)) data[center + d] = v;
+      }
+    };
+    for (let i = 0; i < 8; i++) addBump(300 + i * 200, 200);
+    addBump(2000, 5000); // the tall allele, well above 5x the median height
+
+    const peaks = detectPeaks(data);
+    expect(peaks.some((p) => Math.abs(p.position - 2000) <= 5)).toBe(true);
+  });
+
+  it("resolves two peaks ~12 scans apart instead of merging them", () => {
+    const data = new Int16Array(4000);
+    const addBump = (center: number, height: number, halfWidth = 4) => {
+      for (let d = -halfWidth; d <= halfWidth; d++) {
+        const v = Math.round(height * (1 - Math.abs(d) / (halfWidth + 1)));
+        if (v > (data[center + d] ?? 0)) data[center + d] = v;
+      }
+    };
+    addBump(2000, 1500);
+    addBump(2012, 2500);
+
+    const peaks = detectPeaks(data);
+    expect(peaks.some((p) => Math.abs(p.position - 2000) <= 3)).toBe(true);
+    expect(peaks.some((p) => Math.abs(p.position - 2012) <= 3)).toBe(true);
+  });
+
+  it("detects the real 6-FAM allele cluster in the LIZ500 sample", () => {
+    // C4_A02 has clear 6-FAM peaks at scans ~2727, ~2743, ~2758 (16 scans / ~1 bp
+    // apart). All three were previously missing from detection and the CSV export.
+    const lizBuf = readFileSync(
+      resolve(import.meta.dirname, "fixtures/LIZ500_analyzed_C4_A02.fsa"),
+    );
+    const liz = new AbifFile(
+      lizBuf.buffer.slice(lizBuf.byteOffset, lizBuf.byteOffset + lizBuf.byteLength),
+    );
+    const ch1 = liz.rawChannels.get(1);
+    expect(ch1).toBeDefined();
+    if (!ch1) return;
+
+    const peaks = detectPeaks(ch1);
+    const near = (pos: number) => peaks.some((p) => Math.abs(p.position - pos) <= 3);
+    expect(near(2727)).toBe(true);
+    expect(near(2743)).toBe(true);
+    expect(near(2758)).toBe(true);
+  });
+});
