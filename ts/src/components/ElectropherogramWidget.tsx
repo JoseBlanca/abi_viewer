@@ -3,7 +3,12 @@ import type { Electropherogram } from "../domain/electropherogram.ts";
 import type { SizeCalibration } from "../domain/size-calibration.ts";
 import type { Domain, XAxisMode } from "../domain/x-domain.ts";
 import type { Trace, Viewport } from "../lib/render-electropherogram.ts";
-import { PADDING, renderElectropherogram } from "../lib/render-electropherogram.ts";
+import {
+  domainToPixel,
+  PADDING,
+  pixelToDomain,
+  renderElectropherogram,
+} from "../lib/render-electropherogram.ts";
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 200;
@@ -12,11 +17,13 @@ const ZOOM_WHEEL_FACTOR = 0.1;
 
 // Plot geometry, derived from the shared PADDING. Used by the hover crosshair to
 // map cursor pixels to domain values the same way the renderer maps them back.
-const PLOT_LEFT = PADDING.left;
+// Exported so the pure readout helpers can be exercised from unit tests.
+export const PLOT_LEFT = PADDING.left;
 const PLOT_RIGHT = CANVAS_WIDTH - PADDING.right;
 const PLOT_TOP = PADDING.top;
 const PLOT_BOTTOM = CANVAS_HEIGHT - PADDING.bottom;
-const PLOT_WIDTH = PLOT_RIGHT - PLOT_LEFT;
+export const PLOT_WIDTH = PLOT_RIGHT - PLOT_LEFT;
+const PLOT_HEIGHT = PLOT_BOTTOM - PLOT_TOP;
 
 const CROSSHAIR_COLOR = "#555";
 const TOOLTIP_BG = "rgba(255, 255, 255, 0.92)";
@@ -48,7 +55,7 @@ interface CrosshairReadout {
  * honouring the active x-axis mode. Returns null when bp can't be resolved in
  * bp mode (no calibration or value outside the calibrated range).
  */
-function snapToScan(
+export function snapToScan(
   domainValue: number,
   mode: XAxisMode,
   calibration: SizeCalibration | null,
@@ -69,7 +76,7 @@ function snapToScan(
  * read its signal, and derive bp when a calibration is available. Returns null
  * when the cursor maps outside the trace or bp can't be resolved in bp mode.
  */
-function resolveReadout(
+export function resolveReadout(
   hoverX: number,
   viewport: Viewport,
   mode: XAxisMode,
@@ -79,7 +86,7 @@ function resolveReadout(
   const { xStart, xEnd } = viewport;
   const xRange = xEnd - xStart;
   if (xRange <= 0) return null;
-  const domainValue = xStart + ((hoverX - PLOT_LEFT) / PLOT_WIDTH) * xRange;
+  const domainValue = pixelToDomain(hoverX, xStart, xRange, PLOT_LEFT, PLOT_WIDTH);
 
   const snapped = snapToScan(domainValue, mode, calibration);
   if (!snapped) return null;
@@ -87,7 +94,7 @@ function resolveReadout(
   if (scan < 0 || scan >= primary.scanCount) return null;
 
   const snappedDomain = mode === "bp" ? (bp ?? domainValue) : scan;
-  const px = PLOT_LEFT + ((snappedDomain - xStart) / xRange) * PLOT_WIDTH;
+  const px = domainToPixel(snappedDomain, xStart, xRange, PLOT_LEFT, PLOT_WIDTH);
 
   const lines = [`Signal: ${primary.valueAt(scan)}`, `Scan: ${scan}`];
   if (bp !== null) {
@@ -102,6 +109,12 @@ function drawCrosshairOverlay(ctx: CanvasRenderingContext2D, readout: CrosshairR
   const { px, lines } = readout;
 
   ctx.save();
+  // Clip to the plot rect so a snapped line at the boundary can't bleed into the
+  // axis padding, matching how the renderer clips its traces.
+  ctx.beginPath();
+  ctx.rect(PLOT_LEFT, PLOT_TOP, PLOT_WIDTH, PLOT_HEIGHT);
+  ctx.clip();
+
   ctx.strokeStyle = CROSSHAIR_COLOR;
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 3]);
@@ -128,7 +141,13 @@ function drawCrosshairOverlay(ctx: CanvasRenderingContext2D, readout: CrosshairR
   ctx.fillStyle = TOOLTIP_BG;
   ctx.strokeStyle = TOOLTIP_BORDER;
   ctx.beginPath();
-  ctx.roundRect(boxX, boxY, boxW, boxH, 4);
+  // roundRect is newer than the rest of the canvas API used here; fall back to a
+  // square box on browsers that lack it rather than throwing.
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(boxX, boxY, boxW, boxH, 4);
+  } else {
+    ctx.rect(boxX, boxY, boxW, boxH);
+  }
   ctx.fill();
   ctx.stroke();
 

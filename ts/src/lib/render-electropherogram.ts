@@ -51,6 +51,32 @@ export interface RenderOptions {
 /** Pixel padding around the plot area. */
 export const PADDING = { top: 24, right: 12, bottom: 28, left: 50 } as const;
 
+/**
+ * Project a domain value (scan index or bp) to a canvas x pixel within the plot
+ * area. Shared by the renderer and the hover crosshair so both use exactly one
+ * mapping and cannot silently drift apart.
+ */
+export function domainToPixel(
+  value: number,
+  xStart: number,
+  xRange: number,
+  plotLeft: number,
+  plotWidth: number,
+): number {
+  return plotLeft + ((value - xStart) / xRange) * plotWidth;
+}
+
+/** Inverse of {@link domainToPixel}: map a canvas x pixel back to a domain value. */
+export function pixelToDomain(
+  px: number,
+  xStart: number,
+  xRange: number,
+  plotLeft: number,
+  plotWidth: number,
+): number {
+  return xStart + ((px - plotLeft) / plotWidth) * xRange;
+}
+
 const AXIS_COLOR = "#999";
 const BACKGROUND = "#fafafa";
 const LABEL_FONT = "12px system-ui, sans-serif";
@@ -192,7 +218,7 @@ function drawScanTrace(
   const iStart = Math.max(0, Math.floor(xStart));
   const iEnd = Math.min(trace.data.length, Math.ceil(xEnd) + 1);
   for (let i = iStart; i < iEnd; i++) {
-    const x = plotLeft + ((i - xStart) / xRange) * plotWidth;
+    const x = domainToPixel(i, xStart, xRange, plotLeft, plotWidth);
     const value = trace.data[i] ?? 0;
     const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
     if (i === iStart) ctx.moveTo(x, y);
@@ -227,7 +253,7 @@ function drawBpTrace(
   for (let i = iStart; i < iEnd; i++) {
     const bp = calibration.scanToBp(i);
     if (bp === null) continue;
-    const x = plotLeft + ((bp - xStart) / xRange) * plotWidth;
+    const x = domainToPixel(bp, xStart, xRange, plotLeft, plotWidth);
     const value = trace.data[i] ?? 0;
     const y = plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
     if (!started) {
