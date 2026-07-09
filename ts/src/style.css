@@ -181,6 +181,19 @@ body {
   height: auto;
 }
 
+.canvas-stack {
+  position: relative;
+}
+
+/* Hover crosshair layer; sits exactly over the trace canvas and never
+   intercepts pointer events so the base canvas keeps handling drag/zoom. */
+.canvas-stack .overlay-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
 .widget-controls {
   display: flex;
   gap: 24px;
