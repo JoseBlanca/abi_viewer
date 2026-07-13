@@ -287,6 +287,50 @@ describe("SizeCalibration (H12 weak-sample regression)", () => {
   });
 });
 
+// Regression: C5_A03 is a weak-signal standard whose trace also carries small
+// baseline bumps between the real ladder spikes. Because the genuine ladder
+// peaks here are narrow, single-scan spikes, the noise floor is estimated from
+// the very quiet baseline alone, so those bumps clear the noise-relative
+// prominence gate. Left in, they inflated the median peak spacing landmark
+// detection relies on — hiding the 139/150/160 triplet and the 340/350, 490/500
+// doublets and inventing false ones — and the matcher assigned only 6 (wrong)
+// ladder peaks even though all 14 detectable ones are present. tryBuild now
+// drops standard peaks below a fraction of the strongest peak's prominence,
+// which restores the full match. Reported by a user (example_abi_files/size_std_bug).
+describe("SizeCalibration (weak standard with baseline bumps regression)", () => {
+  it("ignores baseline bumps and matches the full ladder", () => {
+    const ep = loadStandardElectropherogram("size_std_bug_A03.fsa");
+    const cal = SizeCalibration.tryBuild(ep, GS500_LIZ);
+    expect(cal).not.toBeNull();
+    if (!cal) return;
+
+    // All three landmark clusters are recovered...
+    for (const bp of [139, 150, 160, 340, 350, 490, 500]) {
+      expect(cal.matchedPeaks.some((m) => m.bp === bp)).toBe(true);
+    }
+    // ...far more than the 6 wrong peaks the pre-fix matcher produced.
+    expect(cal.matchedPeaks.length).toBeGreaterThanOrEqual(14);
+    expect(cal.maxBp).toBe(500);
+    expect(cal.isReliable).toBe(true);
+    for (const m of cal.matchedPeaks) expect(GS500_LIZ.sizes).toContain(m.bp);
+    assertMonotonic(cal.matchedPeaks);
+  });
+});
+
+// The full 8-well batch (C5_A03..H03) reported alongside A03. Every well is a
+// weak-signal standard carrying baseline bumps; before the prominence filter
+// A03 matched only 6 and B03 only 11, while the rest matched but sat one bump
+// away from breaking. All eight must now yield the same full, reliable 14-peak
+// calibration. Locks in the fix across the whole reported set.
+describe("SizeCalibration on size_std_bug fixtures", () => {
+  const WELLS = ["A03", "B03", "C03", "D03", "E03", "F03", "G03", "H03"];
+  for (const well of WELLS) {
+    it(`calibration for size_std_bug_${well}`, () => {
+      verifyFixtureCalibration(`size_std_bug_${well}.fsa`, 14, true);
+    });
+  }
+});
+
 // Run the matcher across all 16 example .fsa files. This locks in the current
 // matcher behavior: as the algorithm evolves, any file that gains/loses matches
 // will show up here. Update the expected numbers when the change is intended.

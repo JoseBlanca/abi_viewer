@@ -7,6 +7,7 @@
  * the calibrated range.
  */
 
+import type { Peak } from "../lib/peak-detection.ts";
 import type { Electropherogram } from "./electropherogram.ts";
 import { findInjectionEnd } from "./injection-detection.ts";
 import { matchPeaksToLadder } from "./peak-ladder-match.ts";
@@ -27,6 +28,26 @@ const MIN_MATCHED_PEAKS = 5;
  * mislabelled, so 1.6 cleanly separates the two.
  */
 const MAX_SLOPE_RATIO = 1.6;
+
+/**
+ * Minimum prominence a standard-channel peak must have, as a fraction of the
+ * strongest ladder peak's prominence, to be kept for ladder matching.
+ *
+ * Unlike sample channels — where a real allele can be arbitrarily weak and
+ * height/prominence must NOT gate detection (see peak-detection.ts) — the size
+ * standard is a set of engineered fragments injected at comparable amounts, so
+ * every genuine ladder peak stands well clear of the baseline. In weak-signal
+ * standard traces the noise-relative detector also picks up small baseline
+ * bumps (prominence a few % of the real peaks). Left in, these junk peaks
+ * inflate the median peak spacing that landmark detection relies on — hiding
+ * the ladder's distinctive tight clusters (GS500's 139/150/160 triplet and the
+ * 340/350, 490/500 doublets) and inventing false ones — which derails matching
+ * and leaves most of the ladder unassigned even though every real peak is
+ * present. Empirically the real fixtures separate cleanly: genuine ladder peaks
+ * sit above ~20% of the max prominence while the junk sits below ~7%, so 0.1
+ * discards the junk with wide margin on both sides.
+ */
+const MIN_STANDARD_PEAK_PROMINENCE_FRACTION = 0.1;
 
 export class SizeCalibration {
   readonly matchedPeaks: readonly MatchedPeak[];
@@ -87,7 +108,8 @@ export class SizeCalibration {
    */
   static tryBuild(standard: Electropherogram, ladder: SizeLadder): SizeCalibration | null {
     const injectionEnd = findInjectionEnd(standard.data);
-    const peaks = standard.peaks.filter((p) => p.position >= injectionEnd);
+    const afterInjection = standard.peaks.filter((p) => p.position >= injectionEnd);
+    const peaks = filterWeakStandardPeaks(afterInjection);
     const matched = matchPeaksToLadder(peaks, ladder.sizes);
     if (!matched || matched.length < MIN_MATCHED_PEAKS) return null;
     return new SizeCalibration(matched, ladder);
@@ -111,6 +133,20 @@ export class SizeCalibration {
     }
     return new SizeCalibration(matched, ladder);
   }
+}
+
+/**
+ * Drop baseline-bump peaks from a standard channel, keeping only those within
+ * MIN_STANDARD_PEAK_PROMINENCE_FRACTION of the strongest peak. See the constant
+ * for why this is safe (and necessary) for the ladder but not for sample
+ * channels. Returns the input unchanged when there are no peaks.
+ */
+function filterWeakStandardPeaks(peaks: readonly Peak[]): Peak[] {
+  let maxProminence = 0;
+  for (const p of peaks) if (p.prominence > maxProminence) maxProminence = p.prominence;
+  if (maxProminence <= 0) return [...peaks];
+  const threshold = maxProminence * MIN_STANDARD_PEAK_PROMINENCE_FRACTION;
+  return peaks.filter((p) => p.prominence >= threshold);
 }
 
 /**
